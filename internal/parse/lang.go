@@ -10,7 +10,22 @@ import (
 	"github.com/smacker/go-tree-sitter/javascript"
 	"github.com/smacker/go-tree-sitter/python"
 	"github.com/smacker/go-tree-sitter/ruby"
+	tsx "github.com/smacker/go-tree-sitter/typescript/tsx"
 	ts "github.com/smacker/go-tree-sitter/typescript/typescript"
+)
+
+// TypeScript and TSX share node-type semantics but need different grammars:
+// the plain TypeScript grammar treats JSX as a syntax error, so .tsx files must
+// be parsed with the TSX grammar. The maps below are read-only and shared.
+var (
+	tsNameFields = map[string]string{
+		"function_declaration":           "name",
+		"method_definition":              "name",
+		"class_declaration":              "name",
+		"abstract_class_declaration":     "name",
+		"generator_function_declaration": "name",
+	}
+	tsCallTypes = map[string]bool{"call_expression": true}
 )
 
 // Spec describes a supported language: detection by extension and the
@@ -85,19 +100,18 @@ var specs = []*Spec{
 		},
 	},
 	{
-		ID:      "typescript",
-		GetLang: ts.GetLanguage,
-		Exts:    map[string]bool{"ts": true, "tsx": true, "mts": true, "cts": true},
-		nameField: map[string]string{
-			"function_declaration":           "name",
-			"method_definition":              "name",
-			"class_declaration":              "name",
-			"abstract_class_declaration":     "name",
-			"generator_function_declaration": "name",
-		},
-		callTypes: map[string]bool{
-			"call_expression": true,
-		},
+		ID:        "typescript",
+		GetLang:   ts.GetLanguage,
+		Exts:      map[string]bool{"ts": true, "mts": true, "cts": true},
+		nameField: tsNameFields,
+		callTypes: tsCallTypes,
+	},
+	{
+		ID:        "tsx",
+		GetLang:   tsx.GetLanguage,
+		Exts:      map[string]bool{"tsx": true},
+		nameField: tsNameFields,
+		callTypes: tsCallTypes,
 	},
 	{
 		ID:      "java",

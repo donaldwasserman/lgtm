@@ -133,7 +133,8 @@ Detected by extension; everything else is skipped, as are `.git`,
 | Python | `.py` |
 | Ruby | `.rb` |
 | JavaScript | `.js` `.mjs` `.cjs` `.jsx` |
-| TypeScript | `.ts` `.tsx` `.mts` `.cts` |
+| TypeScript | `.ts` `.mts` `.cts` |
+| TSX | `.tsx` |
 | Java | `.java` |
 
 ## GitHub Action
