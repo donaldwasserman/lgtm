@@ -3,6 +3,7 @@ ALLOY_URL = https://github.com/AlloyTools/org.alloytools.alloy/releases/download
 ALLOY_DIR = alloy
 JAR = $(ALLOY_DIR)/alloy.jar
 RUNTIME = $(ALLOY_DIR)/runtime
+OUTPUT = $(ALLOY_DIR)/output
 GO ?= go
 
 .PHONY: setup check scenarios all verify generate generate-instances build test clean
@@ -20,23 +21,23 @@ setup: $(JAR)
 
 check: $(JAR)
 	@echo "=== Property checks ==="
-	@rm -rf properties
-	@java -Djava.awt.headless=true -jar $(JAR) exec \
+	@mkdir -p $(OUTPUT)
+	@java -Djava.awt.headless=true -jar $(JAR) exec -f -o $(OUTPUT)/properties \
 		$(ALLOY_DIR)/properties.als 2>&1 \
-		| tee /tmp/lgtm_check.log
+		| tee $(OUTPUT)/check.log
 	@# Exit non-zero if any check reports SAT (counterexample found)
-	@! grep -qE '^[0-9]+\. check .*  +1/' /tmp/lgtm_check.log \
+	@! grep -qE '^[0-9]+\. check .*  +1/' $(OUTPUT)/check.log \
 		|| { echo "FAIL: counterexample found"; exit 1; }
 	@echo "All properties hold"
 
 scenarios: $(JAR)
 	@echo "=== Scenario verification ==="
-	@rm -rf scenarios
-	@java -Djava.awt.headless=true -jar $(JAR) exec \
+	@mkdir -p $(OUTPUT)
+	@java -Djava.awt.headless=true -jar $(JAR) exec -f -o $(OUTPUT)/scenarios \
 		$(ALLOY_DIR)/scenarios.als 2>&1 \
-		| tee /tmp/lgtm_scenarios.log
+		| tee $(OUTPUT)/scenarios.log
 	@# Exit non-zero if any scenario is UNSAT (expected instance not found)
-	@! grep -qE 'UNSAT' /tmp/lgtm_scenarios.log \
+	@! grep -qE 'UNSAT' $(OUTPUT)/scenarios.log \
 		|| { echo "FAIL: scenario unsat"; exit 1; }
 	@echo "All scenarios satisfiable"
 
@@ -53,8 +54,7 @@ generate-instances: $(JAR)
 generate: generate-instances
 	$(GO) run ./cmd/genalloy -als $(ALLOY_DIR)/scenarios.als -xml $(RUNTIME) -out eval/evaluator_alloy_test.go
 
-# Regenerate the test and run it. Expected to FAIL (red, TDD) until
-# eval.RequiresReview is implemented.
+# Regenerate the Alloy-driven test from the spec and run the full suite.
 verify: generate build
 	$(GO) test ./...
 
@@ -69,7 +69,6 @@ test:
 
 all: check scenarios generate build
 	@echo "=== All checks complete ==="
-	@rm -rf properties scenarios
 
 clean:
-	rm -rf bin $(ALLOY_DIR)/output $(RUNTIME) properties scenarios
+	rm -rf bin $(OUTPUT) $(RUNTIME)

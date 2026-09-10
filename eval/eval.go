@@ -1,8 +1,8 @@
 // Package eval holds the PR-review complexity decision logic.
 //
-// TODO(TDD): RequiresReview is intentionally unimplemented. Tests generated
-// from Alloy scenarios (evaluator_alloy_test.go) currently fail, driving
-// implementation against the formal spec in alloy/pr_review.als.
+// RequiresReview implements the formal spec in alloy/pr_review.als and is
+// tested against evaluator_alloy_test.go, which is generated from Alloy
+// scenario instances by cmd/genalloy (see `make generate`).
 package eval
 
 // Metrics summarizes the AST-graph complexity of a pull request's changes.
