@@ -2,6 +2,8 @@
 // used by the lgtm parser, differ, and metrics layers.
 package model
 
+import "strconv"
+
 // Node is a serializable, language-agnostic syntax-tree node captured from a
 // Tree-sitter parse. Only named nodes are retained (leaf tokens like commas
 // are ignored) to reduce noise when aligning base versus head trees.
@@ -12,34 +14,24 @@ type Node struct {
 	Text     string  `json:"text,omitempty"`     // source text of the node (for leaf equivalence)
 	Start    uint32  `json:"startByte"`          // byte offset of node start
 	End      uint32  `json:"endByte"`            // byte offset of node end
+	Index    int     `json:"index"`              // position among the parent's retained children
 	Nest     int     `json:"nest"`               // raw AST nesting depth (root = 0)
 	Call     int     `json:"call,omitempty"`     // max intra-file call depth through this node
 	Depth    int     `json:"depth"`              // Nest + Call (computed)
 	Children []*Node `json:"children,omitempty"` // named children in source order
-	Changed  bool    `json:"changed,omitempty"`
 }
 
 // Key returns a stable identity for alignment: the extracted name when
-// present, falling back to the source position represented by Start.
+// present, falling back to the node's position among its parent's children.
+//
+// Byte offsets are deliberately not used here. Editing a single token shifts
+// the offset of everything after it, which made untouched siblings fail to
+// align and be reported as a delete plus an insert.
 func (n *Node) Key() string {
 	if n.Name != "" {
 		return n.Type + ":" + n.Name
 	}
-	return n.Type + ":@" + itoa(n.Start)
-}
-
-func itoa(v uint32) string {
-	if v == 0 {
-		return "0"
-	}
-	var buf [20]byte
-	i := len(buf)
-	for v > 0 {
-		i--
-		buf[i] = byte('0' + v%10)
-		v /= 10
-	}
-	return string(buf[i:])
+	return n.Type + ":#" + strconv.Itoa(n.Index)
 }
 
 // File is one parsed source file.

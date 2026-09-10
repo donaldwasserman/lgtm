@@ -50,7 +50,7 @@ def app():
 		t.Fatal(err)
 	}
 	res := diff.Diff(baseFiles, headFiles)
-	m := Compute(res, false)
+	m := Compute(res, false, false)
 
 	if m.DepthNew <= 0 {
 		t.Fatalf("DepthNew = %d, want >0 (added call chain)", m.DepthNew)
@@ -70,8 +70,48 @@ def app():
 
 func TestTopTwentyPassesThrough(t *testing.T) {
 	res := &diff.Result{}
-	m := Compute(res, true)
+	m := Compute(res, true, false)
 	if !m.TopTwenty {
 		t.Fatal("TopTwenty should pass through true")
+	}
+}
+
+// TestBreadthCountsOnlyChangedFiles is the regression test for breadth having
+// counted every source file in the tree rather than the touched ones. Before
+// the fix this reported Breadth == 5.
+func TestBreadthCountsOnlyChangedFiles(t *testing.T) {
+	base := t.TempDir()
+	head := t.TempDir()
+
+	write := func(dir, name, src string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(src), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// exactly one file differs between the trees
+	write(base, "a.go", "package p\n\nfunc A() string { return \"hi\" }\n")
+	write(head, "a.go", "package p\n\nfunc A() string { return \"hello\" }\n")
+
+	// four byte-identical files that must not count toward breadth
+	for _, n := range []string{"u1", "u2", "u3", "u4"} {
+		src := "package p\n\nfunc " + n + "() int { return 1 }\n"
+		write(base, n+".go", src)
+		write(head, n+".go", src)
+	}
+
+	baseFiles, err := parse.Scan(context.Background(), base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	headFiles, err := parse.Scan(context.Background(), head)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	m := Compute(diff.Diff(baseFiles, headFiles), false, false)
+	if m.Breadth != 1 {
+		t.Fatalf("Breadth = %d, want 1 (only a.go changed)", m.Breadth)
 	}
 }

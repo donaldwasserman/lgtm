@@ -16,7 +16,8 @@ one sig Metrics {
   depth_new: one Int,
   breadth: one Int,
   depth_total: one Int,
-  topTwenty: one BOOL
+  topTwenty: one BOOL,
+  unparsed: one BOOL
 }
 
 fact ValidModel {
@@ -42,9 +43,19 @@ pred isTopTwenty[m: Metrics] {
   m.topTwenty = TRUE
 }
 
+-- Some file on either side could not be parsed, so the metrics below
+-- do not describe the whole change.
+pred isUnparsed[m: Metrics] {
+  m.unparsed = TRUE
+}
+
 -- A trusted (top-20%) contributor is exempt from review,
 -- overriding the normal depth/breadth rules.
+--
+-- An unparseable tree overrides everything, the exemption included: when the
+-- metrics cannot describe the change, the gate must not wave it through.
 pred requiresReview[m: Metrics] {
-  (not isTopTwenty[m]) and
-  (highDepthExisting[m] or broadAndNontrivial[m])
+  isUnparsed[m] or
+  ((not isTopTwenty[m]) and
+   (highDepthExisting[m] or broadAndNontrivial[m]))
 }

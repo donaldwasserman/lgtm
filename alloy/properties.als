@@ -3,7 +3,8 @@ open pr_review
 
 assert NewCodeExemption {
   all m: Metrics | {
-    (not highDepthExisting[m] and
+    (not isUnparsed[m] and
+     not highDepthExisting[m] and
      gte[int[m.depth_new], int[Thresholds.theta_depth]] and
      lt[int[m.breadth], int[Thresholds.theta_breadth]])
     implies not requiresReview[m]
@@ -12,7 +13,8 @@ assert NewCodeExemption {
 
 assert TrivialDepthExemption {
   all m: Metrics | {
-    (lte[int[m.depth_total], int[Thresholds.epsilon_trivial]] and
+    (not isUnparsed[m] and
+     lte[int[m.depth_total], int[Thresholds.epsilon_trivial]] and
      not highDepthExisting[m])
     implies not requiresReview[m]
   }
@@ -34,7 +36,8 @@ assert BroadNontrivialRequiresReview {
 
 assert LowEverythingNeverRequires {
   all m: Metrics | {
-    (not highDepthExisting[m] and
+    (not isUnparsed[m] and
+     not highDepthExisting[m] and
      lt[int[m.breadth], int[Thresholds.theta_breadth]])
     implies not requiresReview[m]
   }
@@ -49,9 +52,17 @@ assert MonotoneInDepthMod {
   }
 }
 
+-- The top-20% exemption applies only when the change could actually be
+-- measured; an unparseable tree is reviewed no matter who submitted it.
 assert TrustedContributorExemption {
   all m: Metrics | {
-    isTopTwenty[m] implies not requiresReview[m]
+    (isTopTwenty[m] and not isUnparsed[m]) implies not requiresReview[m]
+  }
+}
+
+assert UnparsedAlwaysRequiresReview {
+  all m: Metrics | {
+    isUnparsed[m] implies requiresReview[m]
   }
 }
 
@@ -62,3 +73,4 @@ check BroadNontrivialRequiresReview for 3
 check LowEverythingNeverRequires for 3
 check MonotoneInDepthMod for 3
 check TrustedContributorExemption for 3
+check UnparsedAlwaysRequiresReview for 3

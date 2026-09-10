@@ -11,11 +11,13 @@ depth. Those numbers feed a decision rule that is specified formally in Alloy
 A PR requires review when:
 
 ```
-requiresReview = !topTwenty && (depthMod >= θ_depth ||
-                                (breadth >= θ_breadth && depthTotal > ε_trivial))
+requiresReview = unparsed || (!topTwenty && (depthMod >= θ_depth ||
+                              (breadth >= θ_breadth && depthTotal > ε_trivial)))
 ```
 
-Trusted (top-20%) contributors are exempt, which overrides both rules.
+Trusted (top-20%) contributors are exempt, which overrides both depth and
+breadth rules. A tree containing a file that could not be parsed overrides even
+that: with no reliable metrics the gate refuses to wave the change through.
 
 ## Requirements
 
@@ -51,12 +53,6 @@ lgtm --base <dir> --head <dir> [flags]
 | `--top-twenty` | `false` | Submitter is a trusted top-20% contributor (exempts review) |
 | `--help` | | Show usage |
 
-`--top-twenty` can also be set with `LGTM_TOP_TWENTY=1` (or `true`); the flag
-wins when both are given.
-
-`--languages` is accepted but ignored — in v1 languages are detected by file
-extension.
-
 ### Exit codes
 
 | Code | Meaning |
@@ -76,10 +72,11 @@ $ lgtm --base /tmp/base --head /tmp/head
   "requiresReview": false,
   "metrics": {
     "DepthMod": 6,
-    "DepthNew": 6,
+    "DepthNew": 1,
     "Breadth": 1,
     "DepthTotal": 6,
-    "TopTwenty": false
+    "TopTwenty": false,
+    "Unparsed": false
   },
   "thresholds": {
     "ThetaDepth": 7,
@@ -95,6 +92,25 @@ $ lgtm --base /tmp/base --head /tmp/head
 }
 $ echo $?
 0
+```
+
+`files` lists only the paths that actually changed; identical files are omitted
+and do not count toward `Breadth`.
+
+A file that fails to parse is reported and forces review:
+
+```console
+$ lgtm --base /tmp/base --head /tmp/broken
+{
+  "requiresReview": true,
+  "metrics": { "...": "...", "Unparsed": true },
+  "parseErrors": [
+    { "path": "x.go", "side": "head", "reason": "syntax error" }
+  ],
+  "files": [ { "path": "x.go", "kind": "modify" } ]
+}
+$ echo $?
+1
 ```
 
 Comparing against a merge base:
@@ -185,7 +201,9 @@ Properties currently checked (`alloy/properties.als`):
 - `BroadNontrivialRequiresReview`
 - `LowEverythingNeverRequires`
 - `MonotoneInDepthMod` — raising `depthMod` never flips review off
-- `TrustedContributorExemption`
+- `TrustedContributorExemption` — a trusted submitter is exempt, provided the
+  tree parsed
+- `UnparsedAlwaysRequiresReview` — an unparseable tree always requires review
 
 ## Layout
 

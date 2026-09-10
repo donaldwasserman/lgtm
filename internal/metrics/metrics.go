@@ -14,30 +14,27 @@ import (
 //	depthModified: max depth of modified + deleted (existing) AST nodes
 //	depthNew:      max depth of newly added nodes
 //	depthTotal:    max depth across all changed nodes
-//	breadth:       number of distinct files touched
+//	breadth:       number of distinct files actually changed
 //	topTwenty:     caller-supplied trusted-submitter exemption
-func Compute(res *diff.Result, topTwenty bool) eval.Metrics {
-	m := eval.Metrics{TopTwenty: topTwenty}
+//	unparsed:      caller-supplied flag that some file failed to parse
+func Compute(res *diff.Result, topTwenty, unparsed bool) eval.Metrics {
+	m := eval.Metrics{TopTwenty: topTwenty, Unparsed: unparsed}
 	seenFiles := map[string]bool{}
 	for _, fc := range res.Files {
+		if len(fc.Changes) == 0 {
+			continue // unchanged file: not part of the change surface
+		}
 		seenFiles[fc.Path] = true
 		for _, c := range fc.Changes {
 			switch c.Kind {
 			case model.KindInsert:
-				m.DepthNew = maxInt(m.DepthNew, c.Depth)
+				m.DepthNew = max(m.DepthNew, c.Depth)
 			case model.KindDelete, model.KindModify:
-				m.DepthMod = maxInt(m.DepthMod, c.Depth)
+				m.DepthMod = max(m.DepthMod, c.Depth)
 			}
-			m.DepthTotal = maxInt(m.DepthTotal, c.Depth)
+			m.DepthTotal = max(m.DepthTotal, c.Depth)
 		}
 	}
 	m.Breadth = len(seenFiles)
 	return m
-}
-
-func maxInt(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }

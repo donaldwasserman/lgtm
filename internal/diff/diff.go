@@ -30,7 +30,12 @@ func Diff(base, head map[string]*model.File) *Result {
 		case h == nil: // only in base -> deleted file
 			res.Files = append(res.Files, deletedFile(b))
 		default:
-			res.Files = append(res.Files, modifiedFile(b, h))
+			// A file present on both sides with an identical AST is not part
+			// of the change: recording it would inflate breadth and report an
+			// untouched file as modified.
+			if fc := modifiedFile(b, h); len(fc.Changes) > 0 {
+				res.Files = append(res.Files, fc)
+			}
 		}
 	}
 	return res
@@ -120,12 +125,17 @@ func alignNodes(fc *model.FileChange, a, b *model.Node) {
 	}
 }
 
-// findMatch looks up a node by key in an index.
+// findMatch looks up a node by key and consumes the match, so two siblings
+// sharing a key (Java method overloads, for instance) cannot both align to the
+// same node on the other side.
 func findMatch(n *model.Node, byKey map[string][]*model.Node) *model.Node {
-	if list := byKey[n.Key()]; len(list) > 0 {
-		return list[0]
+	k := n.Key()
+	list := byKey[k]
+	if len(list) == 0 {
+		return nil
 	}
-	return nil
+	byKey[k] = list[1:]
+	return list[0]
 }
 
 func indexByKey(nodes []*model.Node) map[string][]*model.Node {

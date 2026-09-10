@@ -10,20 +10,24 @@ import (
 )
 
 var alloyCases = []struct {
-	name                                   string
-	depthMod, depthNew, breadth, depthTotal int
-	topTwenty, want                        bool
+	name                                     string
+	depthMod, depthNew, breadth, depthTotal  int
+	topTwenty, unparsed                      bool
+	thetaDepth, thetaBreadth, epsilonTrivial int
+	want                                     bool
 }{
-	{"scenario_allAtBoundaries", 7, 7, 7, 7, false, true},
-	{"scenario_broadButTrivial", 1, 1, 6, 1, false, false},
-	{"scenario_coreRefactor", 7, 2, 3, 7, false, true},
-	{"scenario_crossCutting", 3, 5, 7, 5, false, true},
-	{"scenario_edgeAtThreshold", 7, 1, 6, 7, false, true},
-	{"scenario_isolatedTypo", 1, 1, 1, 1, false, false},
-	{"scenario_newDeepSubsystem", 1, 7, 2, 7, false, false},
-	{"scenario_trustedCoreRefactor", 7, 2, 3, 7, true, false},
-	{"scenario_trustedEdgeAtThreshold", 7, 1, 6, 7, true, false},
-	{"scenario_wideRename", 1, 1, 7, 1, false, false},
+	{"scenario_allAtBoundaries", 7, 7, 7, 7, false, false, 7, 6, 1, true},
+	{"scenario_broadButTrivial", 1, 1, 6, 1, false, false, 7, 6, 1, false},
+	{"scenario_coreRefactor", 7, 2, 3, 7, false, false, 7, 6, 1, true},
+	{"scenario_crossCutting", 3, 5, 7, 5, false, false, 7, 6, 1, true},
+	{"scenario_edgeAtThreshold", 7, 1, 6, 7, false, false, 7, 6, 1, true},
+	{"scenario_isolatedTypo", 1, 1, 1, 1, false, false, 7, 6, 1, false},
+	{"scenario_newDeepSubsystem", 1, 7, 2, 7, false, false, 7, 6, 1, false},
+	{"scenario_trustedCoreRefactor", 7, 2, 3, 7, true, false, 7, 6, 1, false},
+	{"scenario_trustedEdgeAtThreshold", 7, 1, 6, 7, true, false, 7, 6, 1, false},
+	{"scenario_trustedUnparsed", 1, 1, 1, 1, true, true, 7, 6, 1, true},
+	{"scenario_unparsedTrivial", 1, 1, 1, 1, false, true, 7, 6, 1, true},
+	{"scenario_wideRename", 1, 1, 7, 1, false, false, 7, 6, 1, false},
 }
 
 func TestAlloyInstances(t *testing.T) {
@@ -36,8 +40,13 @@ func TestAlloyInstances(t *testing.T) {
 					Breadth:    tc.breadth,
 					DepthTotal: tc.depthTotal,
 					TopTwenty:  tc.topTwenty,
+					Unparsed:   tc.unparsed,
 				},
-				eval.DefaultThresholds,
+				eval.Thresholds{
+					ThetaDepth:     tc.thetaDepth,
+					ThetaBreadth:   tc.thetaBreadth,
+					EpsilonTrivial: tc.epsilonTrivial,
+				},
 			)
 			if got != tc.want {
 				t.Errorf("RequiresReview(%+v) = %v, want %v", tc, got, tc.want)

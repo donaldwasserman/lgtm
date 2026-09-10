@@ -11,10 +11,12 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"sort"
 
 	"lgtm/eval"
 	"lgtm/internal/diff"
 	"lgtm/internal/metrics"
+	"lgtm/internal/model"
 	"lgtm/internal/parse"
 )
 
@@ -22,7 +24,16 @@ type report struct {
 	RequiresReview bool            `json:"requiresReview"`
 	Metrics        eval.Metrics    `json:"metrics"`
 	Thresholds     eval.Thresholds `json:"thresholds"`
+	ParseErrors    []parseError    `json:"parseErrors,omitempty"`
 	Files          []*fileSummary  `json:"files"`
+}
+
+// parseError names a file that could not be parsed. Any entry here forces
+// review: the metrics no longer describe the whole change.
+type parseError struct {
+	Path   string `json:"path"`
+	Side   string `json:"side"` // "base" or "head"
+	Reason string `json:"reason"`
 }
 
 type fileSummary struct {
@@ -43,7 +54,6 @@ func run() int {
 	epsilonTrivial := fs.Int("epsilon-trivial", 1, "below-depth trivial epsilon")
 	topTwenty := fs.Bool("top-twenty", false, "submitter is a trusted top-20% contributor (exempts review)")
 	help := fs.Bool("help", false, "show usage")
-	_ = fs.String("languages", "", "comma-separated language ids (v1: supported automatically by extension)")
 
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: lgtm --base <dir> --head <dir> [flags]\n\n")
@@ -65,10 +75,6 @@ func run() int {
 		ThetaDepth:     *thetaDepth,
 		ThetaBreadth:   *thetaBreadth,
 		EpsilonTrivial: *epsilonTrivial,
-	}
-
-	if env := os.Getenv("LGTM_TOP_TWENTY"); env != "" && !*topTwenty {
-		*topTwenty = env == "1" || env == "true"
 	}
 
 	out, requiresReview, err := analyze(*base, *head, thr, *topTwenty)
@@ -103,17 +109,36 @@ func analyze(base, head string, thr eval.Thresholds, topTwenty bool) (report, bo
 		return report{}, false, err
 	}
 
+	parseErrs := append(
+		collectParseErrors("base", baseFiles),
+		collectParseErrors("head", headFiles)...)
+
 	res := diff.Diff(baseFiles, headFiles)
-	m := metrics.Compute(res, topTwenty)
+	m := metrics.Compute(res, topTwenty, len(parseErrs) > 0)
 	decision := eval.RequiresReview(m, thr)
 
 	rep := report{
 		RequiresReview: decision,
 		Metrics:        m,
 		Thresholds:     thr,
+		ParseErrors:    parseErrs,
 	}
 	for _, fc := range res.Files {
 		rep.Files = append(rep.Files, &fileSummary{Path: fc.Path, Kind: string(fc.Kind)})
 	}
 	return rep, decision, nil
+}
+
+// collectParseErrors lists the files on one side that could not be parsed,
+// sorted by path so the report is deterministic across runs.
+func collectParseErrors(side string, files map[string]*model.File) []parseError {
+	var out []parseError
+	for _, f := range files {
+		if f.Error == nil {
+			continue
+		}
+		out = append(out, parseError{Path: f.Path, Side: side, Reason: f.Error.Msg})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
+	return out
 }

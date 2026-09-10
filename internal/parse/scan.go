@@ -5,7 +5,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"strings"
 
 	sitter "github.com/smacker/go-tree-sitter"
 
@@ -17,6 +16,14 @@ import (
 // unparseable files are recorded with an Error.
 func Scan(ctx context.Context, dir string) (map[string]*model.File, error) {
 	files := map[string]*model.File{}
+	// One parser per language, reused across files and closed on the way out;
+	// the binding allocates C memory that is not reclaimed otherwise.
+	parsers := map[string]*sitter.Parser{}
+	defer func() {
+		for _, p := range parsers {
+			p.Close()
+		}
+	}()
 	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -31,23 +38,36 @@ func Scan(ctx context.Context, dir string) (map[string]*model.File, error) {
 		if spec == nil {
 			return nil
 		}
-		rel := strings.TrimPrefix(path, dir)
-		rel = strings.TrimPrefix(rel, string(filepath.Separator))
+		rel, err := filepath.Rel(dir, path)
+		if err != nil {
+			return err
+		}
 		src, err := os.ReadFile(path)
 		if err != nil {
 			return err
 		}
-		p := sitter.NewParser()
-		p.SetLanguage(spec.GetLang())
+		p, ok := parsers[spec.ID]
+		if !ok {
+			p = sitter.NewParser()
+			p.SetLanguage(spec.GetLang())
+			parsers[spec.ID] = p
+		}
 		tree, perr := p.ParseCtx(ctx, nil, src)
 		if perr != nil {
 			files[rel] = &model.File{Path: rel, Lang: spec.ID,
 				Error: &model.FileErr{Msg: perr.Error()}}
 			return nil
 		}
-		root := spec.build(tree.RootNode(), src, 0)
-		computeCallDepth(root, spec)
-		files[rel] = &model.File{Path: rel, Lang: spec.ID, Root: root}
+		f := &model.File{Path: rel, Lang: spec.ID}
+		// Tree-sitter reports malformed source as ERROR/MISSING nodes rather
+		// than a parse failure, so this - not perr - is the branch that fires
+		// on broken input.
+		if tree.RootNode().HasError() {
+			f.Error = &model.FileErr{Msg: "syntax error"}
+		}
+		f.Root = spec.build(tree.RootNode(), src, 0, 0)
+		computeCallDepth(f.Root, spec)
+		files[rel] = f
 		return nil
 	})
 	return files, err
@@ -67,7 +87,7 @@ func skipDir(path string) bool {
 // build converts a Tree-sitter node into the language-agnostic named-node
 // model, recursing only into named children and extracting a definition name
 // where the node type declares one.
-func (s *Spec) build(n *sitter.Node, src []byte, depth int) *model.Node {
+func (s *Spec) build(n *sitter.Node, src []byte, depth, index int) *model.Node {
 	start, end := n.StartByte(), n.EndByte()
 	name := ""
 	if field, ok := s.nameField[n.Type()]; ok {
@@ -88,6 +108,7 @@ func (s *Spec) build(n *sitter.Node, src []byte, depth int) *model.Node {
 		Text:   string(src[start:end]),
 		Start:  start,
 		End:    end,
+		Index:  index,
 		Nest:   depth,
 	}
 	nc := n.NamedChildCount()
@@ -96,8 +117,13 @@ func (s *Spec) build(n *sitter.Node, src []byte, depth int) *model.Node {
 		if child == nil {
 			continue
 		}
-		// skip generated error / missing nodes
-		node.Children = append(node.Children, s.build(child, src, depth+1))
+		// skip generated error / missing nodes: they carry no real structure
+		// and would otherwise pollute alignment keys and depth
+		if child.IsError() || child.IsMissing() {
+			continue
+		}
+		node.Children = append(node.Children,
+			s.build(child, src, depth+1, len(node.Children)))
 	}
 	return node
 }

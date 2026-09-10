@@ -17,6 +17,7 @@ import (
 	"encoding/xml"
 	"flag"
 	"fmt"
+	"go/format"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -58,7 +59,13 @@ type Scenario struct {
 	Breadth    int
 	DepthTotal int
 	TopTwenty  bool
-	Want       bool
+	Unparsed   bool
+	// Thresholds are read from the instance rather than assumed, so a scenario
+	// that varies them is not silently tested against the defaults.
+	ThetaDepth     int
+	ThetaBreadth   int
+	EpsilonTrivial int
+	Want           bool
 }
 
 func main() {
@@ -206,6 +213,14 @@ func instanceToScenario(inst Instance) (Scenario, error) {
 			s.DepthTotal = mustInt(value)
 		case "topTwenty":
 			s.TopTwenty = strings.Contains(value, "TRUE")
+		case "unparsed":
+			s.Unparsed = strings.Contains(value, "TRUE")
+		case "theta_depth":
+			s.ThetaDepth = mustInt(value)
+		case "theta_breadth":
+			s.ThetaBreadth = mustInt(value)
+		case "epsilon_trivial":
+			s.EpsilonTrivial = mustInt(value)
 		}
 	}
 	return s, nil
@@ -227,37 +242,51 @@ func writeTest(path, alsPath string, scenarios []Scenario) error {
 	b.WriteString("import (\n\t\"testing\"\n\n\t\"lgtm/eval\"\n)\n\n")
 
 	b.WriteString("var alloyCases = []struct {\n")
-	b.WriteString("\tname                                   string\n")
-	b.WriteString("\tdepthMod, depthNew, breadth, depthTotal int\n")
-	b.WriteString("\ttopTwenty, want                        bool\n")
+	b.WriteString("name string\n")
+	b.WriteString("depthMod, depthNew, breadth, depthTotal int\n")
+	b.WriteString("topTwenty, unparsed bool\n")
+	b.WriteString("thetaDepth, thetaBreadth, epsilonTrivial int\n")
+	b.WriteString("want bool\n")
 	b.WriteString("}{\n")
 	for _, s := range scenarios {
-		fmt.Fprintf(&b, "\t{%q, %d, %d, %d, %d, %t, %t},\n",
-			s.Name, s.DepthMod, s.DepthNew, s.Breadth, s.DepthTotal, s.TopTwenty, s.Want)
+		fmt.Fprintf(&b, "{%q, %d, %d, %d, %d, %t, %t, %d, %d, %d, %t},\n",
+			s.Name, s.DepthMod, s.DepthNew, s.Breadth, s.DepthTotal,
+			s.TopTwenty, s.Unparsed,
+			s.ThetaDepth, s.ThetaBreadth, s.EpsilonTrivial, s.Want)
 	}
 	b.WriteString("}\n\n")
 
-	b.WriteString("func TestAlloyInstances(t *testing.T) {\n")
-	b.WriteString("\tfor _, tc := range alloyCases {\n")
-	b.WriteString("\t\tt.Run(tc.name, func(t *testing.T) {\n")
-	b.WriteString("\t\t\tgot := eval.RequiresReview(\n")
-	b.WriteString("\t\t\t\teval.Metrics{\n")
-	b.WriteString("\t\t\t\t\tDepthMod:   tc.depthMod,\n")
-	b.WriteString("\t\t\t\t\tDepthNew:   tc.depthNew,\n")
-	b.WriteString("\t\t\t\t\tBreadth:    tc.breadth,\n")
-	b.WriteString("\t\t\t\t\tDepthTotal: tc.depthTotal,\n")
-	b.WriteString("\t\t\t\t\tTopTwenty:  tc.topTwenty,\n")
-	b.WriteString("\t\t\t\t},\n")
-	b.WriteString("\t\t\t\teval.DefaultThresholds,\n")
-	b.WriteString("\t\t\t)\n")
-	b.WriteString("\t\t\tif got != tc.want {\n")
-	b.WriteString("\t\t\t\tt.Errorf(\"RequiresReview(%+v) = %v, want %v\", tc, got, tc.want)\n")
-	b.WriteString("\t\t\t}\n")
-	b.WriteString("\t\t})\n")
-	b.WriteString("\t}\n")
-	b.WriteString("}\n")
+	b.WriteString(`func TestAlloyInstances(t *testing.T) {
+	for _, tc := range alloyCases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := eval.RequiresReview(
+				eval.Metrics{
+					DepthMod:   tc.depthMod,
+					DepthNew:   tc.depthNew,
+					Breadth:    tc.breadth,
+					DepthTotal: tc.depthTotal,
+					TopTwenty:  tc.topTwenty,
+					Unparsed:   tc.unparsed,
+				},
+				eval.Thresholds{
+					ThetaDepth:     tc.thetaDepth,
+					ThetaBreadth:   tc.thetaBreadth,
+					EpsilonTrivial: tc.epsilonTrivial,
+				},
+			)
+			if got != tc.want {
+				t.Errorf("RequiresReview(%+v) = %v, want %v", tc, got, tc.want)
+			}
+		})
+	}
+}
+`)
 
-	return os.WriteFile(path, b.Bytes(), 0o644)
+	src, err := format.Source(b.Bytes())
+	if err != nil {
+		return fmt.Errorf("format generated source: %w", err)
+	}
+	return os.WriteFile(path, src, 0o644)
 }
 
 func fatal(format string, args ...any) {

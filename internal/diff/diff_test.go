@@ -1,9 +1,13 @@
 package diff
 
 import (
+	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"lgtm/internal/model"
+	"lgtm/internal/parse"
 )
 
 // small model helpers (bypass the parser for pure diff tests)
@@ -79,5 +83,85 @@ func TestDiffNewFileAllInsert(t *testing.T) {
 	}
 	if len(res.Files[0].Changes) == 0 {
 		t.Fatal("expected node changes for inserted file")
+	}
+}
+
+// TestDiffSkipsUnchangedFiles guards the breadth metric: a file present on both
+// sides with an identical AST must not be reported as a change, otherwise every
+// file in the repo counts toward breadth.
+func TestDiffSkipsUnchangedFiles(t *testing.T) {
+	tree := func() *model.Node {
+		return &model.Node{Type: "root", Text: "package p\nfunc f(){}\n",
+			Children: []*model.Node{{Type: "declaration", Name: "f", Text: "func f(){}"}}}
+	}
+	base := map[string]*model.File{"f.go": {Path: "f.go", Root: tree()}}
+	head := map[string]*model.File{"f.go": {Path: "f.go", Root: tree()}}
+
+	res := Diff(base, head)
+	if len(res.Files) != 0 {
+		t.Fatalf("identical file reported as changed: %+v", res.Files)
+	}
+}
+
+// TestDiffReportsOnlyChangedFileAmongUnchanged mixes one real change into a set
+// of identical files and asserts only the changed path survives.
+func TestDiffReportsOnlyChangedFileAmongUnchanged(t *testing.T) {
+	same := func() *model.Node {
+		return &model.Node{Type: "root", Text: "same", Children: []*model.Node{
+			{Type: "declaration", Name: "u", Text: "u"}}}
+	}
+	base := map[string]*model.File{
+		"changed.go": {Path: "changed.go", Root: &model.Node{Type: "root", Text: "before"}},
+		"u1.go":      {Path: "u1.go", Root: same()},
+		"u2.go":      {Path: "u2.go", Root: same()},
+	}
+	head := map[string]*model.File{
+		"changed.go": {Path: "changed.go", Root: &model.Node{Type: "root", Text: "after"}},
+		"u1.go":      {Path: "u1.go", Root: same()},
+		"u2.go":      {Path: "u2.go", Root: same()},
+	}
+
+	res := Diff(base, head)
+	if len(res.Files) != 1 {
+		t.Fatalf("expected 1 changed file, got %d: %+v", len(res.Files), res.Files)
+	}
+	if res.Files[0].Path != "changed.go" {
+		t.Fatalf("reported %q, want changed.go", res.Files[0].Path)
+	}
+}
+
+// TestDiffIgnoresByteOffsetShifts guards against aligning nodes by byte offset.
+// Editing one literal shifts the offset of everything after it, which used to
+// leave the untouched statements below unmatched and record each as a delete
+// plus an insert.
+func TestDiffIgnoresByteOffsetShifts(t *testing.T) {
+	const (
+		before = "package p\n\nfunc F() int {\n\tx := 1\n\ty := 2\n\tz := 3\n\treturn x + y + z\n}\n"
+		after  = "package p\n\nfunc F() int {\n\tx := 11\n\ty := 2\n\tz := 3\n\treturn x + y + z\n}\n"
+	)
+	base, head := t.TempDir(), t.TempDir()
+	for dir, src := range map[string]string{base: before, head: after} {
+		if err := os.WriteFile(filepath.Join(dir, "x.go"), []byte(src), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	baseFiles, err := parse.Scan(context.Background(), base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	headFiles, err := parse.Scan(context.Background(), head)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Changing one token may only ever modify the chain of ancestors above it.
+	for _, fc := range Diff(baseFiles, headFiles).Files {
+		for _, c := range fc.Changes {
+			if c.Kind != model.KindModify {
+				t.Errorf("got %s of %s; a one-token edit must not insert or delete siblings",
+					c.Kind, c.Type)
+			}
+		}
 	}
 }
