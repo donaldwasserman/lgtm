@@ -3,6 +3,11 @@ name: review-complexity
 on:
   pull_request:
 
+# Required for the action to label the PR and request reviewers.
+permissions:
+  contents: read
+  pull-requests: write
+
 jobs:
   lgtm:
     runs-on: ubuntu-latest
@@ -16,16 +21,18 @@ jobs:
       - name: Determine merge base
         id: base
         run: |
-          echo "ref=$(git merge-base origin/${{ github.base_ref }} HEAD)" >> "$GITHUB_OUTPUT"
+          echo "ref=$(git merge-base "origin/$GITHUB_BASE_REF" HEAD)" >> "$GITHUB_OUTPUT"
       - name: Extract base tree
         run: |
           mkdir -p "$RUNNER_TEMP/lgtm/base"
           git archive "${{ steps.base.outputs.ref }}" | tar -x -C "$RUNNER_TEMP/lgtm/base"
       - uses: ./
         with:
-          base: "$RUNNER_TEMP/lgtm/base"
-          head: "$GITHUB_WORKSPACE"
+          base: ${{ runner.temp }}/lgtm/base
+          head: ${{ github.workspace }}
           theta-depth: '7'
           theta-breadth: '6'
           epsilon-trivial: '1'
           top-twenty: ${{ contains(fromJson('["trusted-user-1","trusted-user-2"]'), github.actor) }}
+          label: 'needs-review'
+

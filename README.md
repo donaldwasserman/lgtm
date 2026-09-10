@@ -139,35 +139,165 @@ Detected by extension; everything else is skipped, as are `.git`,
 
 ## GitHub Action
 
-The repo ships a composite action (`action.yml`). It builds the binary and runs
-it, so a non-zero exit fails the step and blocks the PR.
+The repo ships a composite action (`action.yml`). It builds the binary, runs it,
+and exposes the decision as the `requires-review` output. It can also label the
+pull request and request reviewers. A failing check does **not** block a merge
+on its own — see [Enforcing the result](#enforcing-the-result).
+
+### Drop-in workflow
+
+Save as `.github/workflows/review-complexity.yml` in the repo you want to
+check. This is the recommended setup: the check stays green and reports its
+verdict by labelling the PR, so flagged changes are routed to a reviewer rather
+than blocked.
 
 ```yaml
-- uses: actions/checkout@v4
-  with:
-    fetch-depth: 0
-- uses: actions/setup-go@v5
-  with:
-    go-version: '1.25'
-- name: Determine merge base
-  id: base
-  run: echo "ref=$(git merge-base origin/${{ github.base_ref }} HEAD)" >> "$GITHUB_OUTPUT"
-- name: Extract base tree
-  run: |
-    mkdir -p "$RUNNER_TEMP/lgtm/base"
-    git archive "${{ steps.base.outputs.ref }}" | tar -x -C "$RUNNER_TEMP/lgtm/base"
-- uses: donaldwasserman/lgtm@main
-  with:
-    base: "$RUNNER_TEMP/lgtm/base"
-    head: "$GITHUB_WORKSPACE"
-    theta-depth: '7'
-    theta-breadth: '6'
-    epsilon-trivial: '1'
-    top-twenty: ${{ contains(fromJson('["trusted-user-1"]'), github.actor) }}
+name: review-complexity
+
+on:
+  pull_request:
+
+# Needed to label the PR and request reviewers.
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  lgtm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+
+      - name: Determine merge base
+        id: base
+        run: echo "ref=$(git merge-base "origin/$GITHUB_BASE_REF" HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Extract base tree
+        run: |
+          mkdir -p "$RUNNER_TEMP/lgtm/base"
+          git archive "${{ steps.base.outputs.ref }}" | tar -x -C "$RUNNER_TEMP/lgtm/base"
+
+      - uses: donaldwasserman/lgtm@main
+        with:
+          base: ${{ runner.temp }}/lgtm/base
+          head: ${{ github.workspace }}
+          theta-depth: '7'
+          theta-breadth: '6'
+          epsilon-trivial: '1'
+          fail-on-review-required: 'false'
+          label: 'needs-review'
 ```
 
-`.github/workflows/review.yml` runs this against the repo itself using the
+Then create the `needs-review` label in the repo, and pick a merge gate from
+[Enforcing the result](#enforcing-the-result).
+
+To make the check itself fail on a flagged PR instead, drop
+`fail-on-review-required` (it defaults to `'true'`) along with `label` and the
+`permissions` block — but read the polarity note in that section first.
+
+To exempt trusted contributors, add:
+
+```yaml
+          top-twenty: ${{ contains(fromJson('["alice","bob"]'), github.actor) }}
+```
+
+`lgtm` compares two directories, so the workflow materialises the base tree
+itself; the action does no git work of its own.
+
+> **Paths must already be resolved.** `base` and `head` are passed to the tool
+> verbatim and are never expanded by a shell, so use `${{ runner.temp }}` and
+> `${{ github.workspace }}`. Writing `"$RUNNER_TEMP/lgtm/base"` passes that text
+> through literally and the run fails with exit 2.
+
+`.github/workflows/review.yml` runs the same thing against this repo using the
 local `uses: ./` form.
+
+### Action inputs
+
+Beyond the four threshold inputs above:
+
+| Input | Default | Description |
+| --- | --- | --- |
+| `label` | `''` | Label added when review is required, removed when it is not. Empty disables labelling. |
+| `request-reviewers` | `''` | Comma-separated reviewers to request. A plain login requests a user; `org/team` requests a team. |
+| `fail-on-review-required` | `'true'` | Whether the step fails when review is required. Set to `'false'` to report the result without failing. |
+| `github-token` | `${{ github.token }}` | Token used to label and request reviewers. Needs `pull-requests: write`. |
+
+Outputs: `requires-review` (`"true"`/`"false"`) and `report` (the JSON).
+
+Labelling and reviewer requests need the job to grant:
+
+```yaml
+permissions:
+  contents: read
+  pull-requests: write
+```
+
+Neither is fatal: if the token cannot label or the reviewer is the PR author or
+is already requested, the action logs a warning and carries on.
+
+## Enforcing the result
+
+Exiting non-zero puts a red check on the pull request. **That alone does not
+prevent a merge** — a check blocks merging only once it is marked required in
+the repository's branch protection rules or rulesets, which is configured in
+repository settings, not here.
+
+Before requiring the check, note the polarity. `lgtm` exits 1 to mean *this
+change needs a human to look at it*, but a required check must go green to
+merge. Requiring it therefore means "only changes that need no review may
+merge": a PR that genuinely warrants review becomes unmergeable until it is
+split or shrunk, and no amount of human approval turns the check green. That is
+a legitimate way to enforce small PRs, but it is not a review workflow.
+
+To route flagged PRs to a reviewer instead, let the check pass and act on the
+result:
+
+The [drop-in workflow](#drop-in-workflow) above is already configured this way.
+To also request reviewers, extend its `with:` block:
+
+```yaml
+        with:
+          base: ${{ runner.temp }}/lgtm/base
+          head: ${{ github.workspace }}
+          fail-on-review-required: 'false'   # signal, not a wall
+          label: 'needs-review'
+          request-reviewers: 'alice,my-org/platform-team'
+```
+
+The merge gate is then one of:
+
+- **Requested reviewers** — enable "Require a pull request before merging" with
+  at least one approval. The action requests reviewers only on flagged PRs, so
+  unflagged ones still need the repository's baseline approvals.
+- **The label** — require a status check that fails while `needs-review` is
+  present and no approval exists, or use a ruleset that blocks merging on that
+  label.
+- **CODEOWNERS** — for path-based ownership, independent of `lgtm`.
+
+Because the label is removed when a PR stops being flagged, a PR that is split
+or shrunk clears itself on the next run.
+
+To gate on the decision in a later step of your own workflow, read the output:
+
+```yaml
+- uses: donaldwasserman/lgtm@main
+  id: lgtm
+  with:
+    base: ${{ runner.temp }}/lgtm/base
+    head: ${{ github.workspace }}
+    fail-on-review-required: 'false'
+- if: steps.lgtm.outputs.requires-review == 'true'
+  env:
+    REPORT: ${{ steps.lgtm.outputs.report }}
+  run: echo "$REPORT"
+```
 
 ## Formal verification
 

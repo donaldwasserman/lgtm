@@ -2,10 +2,15 @@ name: 'lgtm'
 description: 'Compare base vs head source trees and decide whether the PR requires review.'
 inputs:
   base:
-    description: 'Path to the base (pre-PR) source tree (usually $GITHUB_WORKSPACE checkout at merge-base).'
+    description: >-
+      Path to the base (pre-PR) source tree. Must be an already-resolved path:
+      use ${{ runner.temp }}/... rather than "$RUNNER_TEMP/...", as the value is
+      passed to the tool verbatim and is not expanded by a shell.
     required: true
   head:
-    description: 'Path to the head (post-PR) source tree.'
+    description: >-
+      Path to the head (post-PR) source tree, normally ${{ github.workspace }}.
+      Must be an already-resolved path; see "base".
     required: true
   theta-depth:
     description: 'High depth threshold (default 7).'
@@ -23,6 +28,39 @@ inputs:
     description: 'Set to true when the PR author is a trusted top-20% contributor (exempts review).'
     required: false
     default: 'false'
+  label:
+    description: >-
+      Label to add to the pull request when review is required, and to remove
+      when it is not. Empty disables labelling.
+    required: false
+    default: ''
+  request-reviewers:
+    description: >-
+      Comma-separated reviewers to request when review is required. A plain
+      login requests a user; "org/team" requests a team.
+    required: false
+    default: ''
+  fail-on-review-required:
+    description: >-
+      Fail the step when review is required (default true, preserving the
+      original behaviour). Set to false to report the result as a passing
+      signal and gate the merge on the label or the requested reviewers
+      instead - see "Enforcing the result" in the README.
+    required: false
+    default: 'true'
+  github-token:
+    description: 'Token used to label the PR and request reviewers. Needs pull-requests: write.'
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  requires-review:
+    description: '"true" when the change requires human review, "false" otherwise.'
+    value: ${{ steps.evaluate.outputs.requires-review }}
+  report:
+    description: 'The full lgtm JSON report.'
+    value: ${{ steps.evaluate.outputs.report }}
+
 runs:
   using: 'composite'
   steps:
@@ -30,14 +68,96 @@ runs:
       shell: bash
       working-directory: ${{ github.action_path }}
       run: go build -o "$GITHUB_ACTION_PATH/bin/lgtm" ./cmd/lgtm
+
+    # Records the decision without failing, so later steps can act on it.
+    # Exit 2 is a genuine tool failure and is still surfaced immediately.
     - name: 'Evaluate review complexity'
+      id: evaluate
+      shell: bash
+      env:
+        LGTM_BASE: ${{ inputs.base }}
+        LGTM_HEAD: ${{ inputs.head }}
+        LGTM_THETA_DEPTH: ${{ inputs.theta-depth }}
+        LGTM_THETA_BREADTH: ${{ inputs.theta-breadth }}
+        LGTM_EPSILON_TRIVIAL: ${{ inputs.epsilon-trivial }}
+        LGTM_TOP_TWENTY_INPUT: ${{ inputs.top-twenty }}
+      run: |
+        report=$("$GITHUB_ACTION_PATH/bin/lgtm" \
+          --base "$LGTM_BASE" \
+          --head "$LGTM_HEAD" \
+          --theta-depth "$LGTM_THETA_DEPTH" \
+          --theta-breadth "$LGTM_THETA_BREADTH" \
+          --epsilon-trivial "$LGTM_EPSILON_TRIVIAL" \
+          --top-twenty="$LGTM_TOP_TWENTY_INPUT") && code=0 || code=$?
+
+        echo "$report"
+
+        if [ "$code" -ge 2 ]; then
+          echo "::error::lgtm failed with exit code $code"
+          exit "$code"
+        fi
+
+        if [ "$code" -eq 1 ]; then
+          echo "requires-review=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "requires-review=false" >> "$GITHUB_OUTPUT"
+        fi
+        {
+          echo "report<<LGTM_REPORT_EOF"
+          echo "$report"
+          echo "LGTM_REPORT_EOF"
+        } >> "$GITHUB_OUTPUT"
+
+    - name: 'Flag the pull request'
+      if: ${{ github.event.pull_request.number && (inputs.label != '' || inputs.request-reviewers != '') }}
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        REQUIRES_REVIEW: ${{ steps.evaluate.outputs.requires-review }}
+        LABEL: ${{ inputs.label }}
+        REVIEWERS: ${{ inputs.request-reviewers }}
+        PR: ${{ github.event.pull_request.number }}
+        REPO: ${{ github.repository }}
+      run: |
+        if [ "$REQUIRES_REVIEW" != "true" ]; then
+          # Clear a stale label so a PR that shrinks stops being flagged.
+          if [ -n "$LABEL" ]; then
+            gh api -X DELETE "repos/$REPO/issues/$PR/labels/$LABEL" --silent 2>/dev/null \
+              && echo "removed label '$LABEL'" \
+              || echo "label '$LABEL' was not present"
+          fi
+          exit 0
+        fi
+
+        if [ -n "$LABEL" ]; then
+          gh api "repos/$REPO/issues/$PR/labels" -f "labels[]=$LABEL" --silent \
+            && echo "added label '$LABEL'" \
+            || echo "::warning::could not add label '$LABEL' (needs pull-requests: write)"
+        fi
+
+        if [ -n "$REVIEWERS" ]; then
+          args=()
+          IFS=',' read -ra requested <<< "$REVIEWERS"
+          for r in "${requested[@]}"; do
+            r="$(echo "$r" | tr -d '[:space:]')"
+            [ -z "$r" ] && continue
+            case "$r" in
+              */*) args+=(-f "team_reviewers[]=${r#*/}") ;;
+              *)   args+=(-f "reviewers[]=$r") ;;
+            esac
+          done
+          if [ "${#args[@]}" -gt 0 ]; then
+            # A 422 here usually means the reviewer is the PR author or is
+            # already requested; neither is worth failing the run over.
+            gh api "repos/$REPO/pulls/$PR/requested_reviewers" "${args[@]}" --silent \
+              && echo "requested review from: $REVIEWERS" \
+              || echo "::warning::could not request reviewers ($REVIEWERS)"
+          fi
+        fi
+
+    - name: 'Require review'
+      if: ${{ steps.evaluate.outputs.requires-review == 'true' && inputs.fail-on-review-required == 'true' }}
       shell: bash
       run: |
-        "$GITHUB_ACTION_PATH/bin/lgtm" \
-          --base "${{ inputs.base }}" \
-          --head "${{ inputs.head }}" \
-          --theta-depth "${{ inputs.theta-depth }}" \
-          --theta-breadth "${{ inputs.theta-breadth }}" \
-          --epsilon-trivial "${{ inputs.epsilon-trivial }}" \
-          --top-twenty="${{ inputs.top-twenty }}"
-      id: evaluate
+        echo "::error::This change requires human review; see the lgtm report above."
+        exit 1
