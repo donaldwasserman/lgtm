@@ -1,0 +1,42 @@
+name: 'lgtm'
+description: 'Compare base vs head source trees and decide whether the PR requires review.'
+inputs:
+  base:
+    description: 'Path to the base (pre-PR) source tree (usually $GITHUB_WORKSPACE checkout at merge-base).'
+    required: true
+  head:
+    description: 'Path to the head (post-PR) source tree.'
+    required: true
+  theta-depth:
+    description: 'High depth threshold (default 7).'
+    required: false
+    default: '7'
+  theta-breadth:
+    description: 'High breadth threshold (default 6).'
+    required: false
+    default: '6'
+  epsilon-trivial:
+    description: 'Trivial-depth upper bound (default 1).'
+    required: false
+    default: '1'
+  top-twenty:
+    description: 'Set to true when the PR author is a trusted top-20% contributor (exempts review).'
+    required: false
+    default: 'false'
+runs:
+  using: 'composite'
+  steps:
+    - name: 'Build lgtm'
+      shell: bash
+      run: go build -o "$GITHUB_ACTION_PATH/bin/lgtm" ./cmd/lgtm
+    - name: 'Evaluate review complexity'
+      shell: bash
+      run: |
+        "$GITHUB_ACTION_PATH/bin/lgtm" \
+          --base "${{ inputs.base }}" \
+          --head "${{ inputs.head }}" \
+          --theta-depth "${{ inputs.theta-depth }}" \
+          --theta-breadth "${{ inputs.theta-breadth }}" \
+          --epsilon-trivial "${{ inputs.epsilon-trivial }}" \
+          --top-twenty="${{ inputs.top-twenty }}"
+      id: evaluate
