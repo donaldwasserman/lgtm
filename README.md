@@ -139,28 +139,33 @@ Detected by extension; everything else is skipped, as are `.git`,
 
 ## GitHub Action
 
-The repo ships a composite action (`action.yml`). It builds the binary, runs it,
-and exposes the decision as the `requires-review` output. It can also label the
-pull request and request reviewers. A failing check does **not** block a merge
-on its own — see [Enforcing the result](#enforcing-the-result).
+The repo ships a composite action (`action.yml`). It builds the binary, runs
+it, and publishes the verdict as a **check run** on the pull request head
+commit. The check is red when the change needs review and nobody has approved
+it, and it clears itself the moment someone does — no re-run required.
+
+It can also label the pull request and request reviewers, which is routing
+rather than enforcement; the check run is the merge gate.
 
 ### Drop-in workflow
 
 Save as `.github/workflows/review-complexity.yml` in the repo you want to
-check. This is the recommended setup: the check stays green and reports its
-verdict by labelling the PR, so flagged changes are routed to a reviewer rather
-than blocked.
+check.
 
 ```yaml
 name: review-complexity
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  # Re-evaluating on review is what lets the check clear itself.
+  pull_request_review:
+    types: [submitted, dismissed]
 
-# Needed to label the PR and request reviewers.
 permissions:
   contents: read
-  pull-requests: write
+  checks: write          # publish the check run
+  pull-requests: write   # label the PR and read its reviews
 
 jobs:
   lgtm:
@@ -169,6 +174,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          # On pull_request_review the default ref is the base branch, so
+          # without this you would analyze the wrong tree.
+          ref: ${{ github.event.pull_request.head.sha }}
 
       - uses: actions/setup-go@v5
         with:
@@ -176,7 +184,12 @@ jobs:
 
       - name: Determine merge base
         id: base
-        run: echo "ref=$(git merge-base "origin/$GITHUB_BASE_REF" HEAD)" >> "$GITHUB_OUTPUT"
+        env:
+          # GITHUB_BASE_REF is not set on pull_request_review.
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          git fetch --no-tags origin "$BASE_REF"
+          echo "ref=$(git merge-base "origin/$BASE_REF" HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Extract base tree
         run: |
@@ -190,101 +203,78 @@ jobs:
           theta-depth: '7'
           theta-breadth: '6'
           epsilon-trivial: '1'
-          fail-on-review-required: 'false'
+          check-name: 'LGTM / review-gate'
           label: 'needs-review'
 ```
 
-Then create the `needs-review` label in the repo, and pick a merge gate from
-[Enforcing the result](#enforcing-the-result).
+Both triggers matter. `pull_request_review` is what re-evaluates on approval;
+`ready_for_review` covers a draft going up for review, which does not fire
+`synchronize`.
 
-To make the check itself fail on a flagged PR instead, drop
-`fail-on-review-required` (it defaults to `'true'`) along with `label` and the
-`permissions` block — but read the polarity note in that section first.
+### What the check means
 
-To exempt trusted contributors, add:
+The check run is published against `github.event.pull_request.head.sha` — the
+commit branch protection actually evaluates — and reports one of:
 
-```yaml
-          top-twenty: ${{ contains(fromJson('["alice","bob"]'), github.actor) }}
-```
+| Conclusion | Title | Meaning |
+| --- | --- | --- |
+| `success` | No review required | Below the thresholds. |
+| `success` | Review required — approved | Above the thresholds, but approved. |
+| `failure` | Review required — awaiting approval | Above the thresholds, no approval yet. |
+| `failure` | Changes requested | Above the thresholds, a reviewer blocked it. |
+| `failure` | Analysis failed — could not evaluate | `lgtm` did not run. Fails closed. |
 
-`lgtm` compares two directories, so the workflow materialises the base tree
-itself; the action does no git work of its own.
+**Green does not mean "this change is simple."** It means *either* the change
+is below the thresholds *or* a human has approved it. A 40-file refactor with
+one approval is green, and that is the intended behaviour: the check asks
+"has this been looked at by someone, if it needed to be?", not "is this
+small?". The check's title says which of the two you are looking at.
 
-> **Paths must already be resolved.** `base` and `head` are passed to the tool
-> verbatim and are never expanded by a shell, so use `${{ runner.temp }}` and
-> `${{ github.workspace }}`. Writing `"$RUNNER_TEMP/lgtm/base"` passes that text
-> through literally and the run fails with exit 2.
+An approval counts when it is the reviewer's most recent verdict on the PR.
+Reviews that only comment are ignored, a dismissed approval stops counting,
+and one outstanding "changes requested" keeps the check red regardless of how
+many approvals sit alongside it. GitHub already prevents an author from
+approving their own pull request, so no extra self-approval handling is
+needed.
 
-`.github/workflows/review.yml` runs the same thing against this repo using the
-local `uses: ./` form.
+A failed analysis is deliberately `failure` rather than `neutral`: `neutral`
+counts as passing for required checks, so a crashed analyzer would silently
+wave pull requests through.
 
 ### Action inputs
 
-Beyond the four threshold inputs above:
-
 | Input | Default | Description |
 | --- | --- | --- |
-| `label` | `''` | Label added when review is required, removed when it is not. Empty disables labelling. |
-| `request-reviewers` | `''` | Comma-separated reviewers to request. A plain login requests a user; `org/team` requests a team. |
-| `fail-on-review-required` | `'true'` | Whether the step fails when review is required. Set to `'false'` to report the result without failing. |
-| `github-token` | `${{ github.token }}` | Token used to label and request reviewers. Needs `pull-requests: write`. |
+| `base` | *(required)* | Resolved path to the base tree |
+| `head` | *(required)* | Resolved path to the head tree |
+| `theta-depth` | `7` | High depth threshold |
+| `theta-breadth` | `6` | High breadth threshold |
+| `epsilon-trivial` | `1` | Trivial-depth upper bound |
+| `top-twenty` | `false` | Author is a trusted top-20% contributor |
+| `check-name` | `LGTM / review-gate` | Name of the published check run. Empty disables it |
+| `label` | *(empty)* | Label applied to flagged pull requests |
+| `request-reviewers` | *(empty)* | Comma-separated reviewers to request on flagged pull requests |
+| `github-token` | `${{ github.token }}` | Needs `checks: write` and `pull-requests: write` |
 
-Outputs: `requires-review` (`"true"`/`"false"`) and `report` (the JSON).
+`base` and `head` are passed to the binary verbatim and are not expanded by a
+shell, so use `${{ runner.temp }}/...` rather than `"$RUNNER_TEMP/..."`.
 
-Labelling and reviewer requests need the job to grant:
+`check-name` is the exact string you type into branch protection. Renaming it
+later un-requires the old name silently, and every open pull request goes
+green — pick one and leave it alone.
 
-```yaml
-permissions:
-  contents: read
-  pull-requests: write
-```
+### Outputs
 
-Neither is fatal: if the token cannot label or the reviewer is the PR author or
-is already requested, the action logs a warning and carries on.
+| Output | Values |
+| --- | --- |
+| `requires-review` | `true`, `false`, or **empty** when `lgtm` could not run |
+| `check-conclusion` | `success` or `failure`; empty when no check was published |
+| `report` | The full JSON report; empty when `lgtm` could not run |
 
-## Enforcing the result
-
-Exiting non-zero puts a red check on the pull request. **That alone does not
-prevent a merge** — a check blocks merging only once it is marked required in
-the repository's branch protection rules or rulesets, which is configured in
-repository settings, not here.
-
-Before requiring the check, note the polarity. `lgtm` exits 1 to mean *this
-change needs a human to look at it*, but a required check must go green to
-merge. Requiring it therefore means "only changes that need no review may
-merge": a PR that genuinely warrants review becomes unmergeable until it is
-split or shrunk, and no amount of human approval turns the check green. That is
-a legitimate way to enforce small PRs, but it is not a review workflow.
-
-To route flagged PRs to a reviewer instead, let the check pass and act on the
-result:
-
-The [drop-in workflow](#drop-in-workflow) above is already configured this way.
-To also request reviewers, extend its `with:` block:
-
-```yaml
-        with:
-          base: ${{ runner.temp }}/lgtm/base
-          head: ${{ github.workspace }}
-          fail-on-review-required: 'false'   # signal, not a wall
-          label: 'needs-review'
-          request-reviewers: 'alice,my-org/platform-team'
-```
-
-The merge gate is then one of:
-
-- **Requested reviewers** — enable "Require a pull request before merging" with
-  at least one approval. The action requests reviewers only on flagged PRs, so
-  unflagged ones still need the repository's baseline approvals.
-- **The label** — require a status check that fails while `needs-review` is
-  present and no approval exists, or use a ruleset that blocks merging on that
-  label.
-- **CODEOWNERS** — for path-based ownership, independent of `lgtm`.
-
-Because the label is removed when a PR stops being flagged, a PR that is split
-or shrunk clears itself on the next run.
-
-To gate on the decision in a later step of your own workflow, read the output:
+`requires-review` is empty rather than `false` on a tool failure, because
+claiming `false` would wave the change through. That means a naive
+`!= 'true'` test reads a crash as "no review needed" — within a pull request,
+gate on `check-conclusion` instead if you want fail-closed behaviour:
 
 ```yaml
 - uses: donaldwasserman/lgtm@main
@@ -292,13 +282,70 @@ To gate on the decision in a later step of your own workflow, read the output:
   with:
     base: ${{ runner.temp }}/lgtm/base
     head: ${{ github.workspace }}
-    fail-on-review-required: 'false'
-- if: steps.lgtm.outputs.requires-review == 'true'
+- if: steps.lgtm.outputs.check-conclusion == 'failure'
   env:
     REPORT: ${{ steps.lgtm.outputs.report }}
   run: echo "$REPORT"
 ```
 
+The job itself fails only when `lgtm` breaks. A change that requires review is
+reported by the check run, not by a red job, so the two signals stay distinct.
+
+### Making it a required check
+
+Publishing the check does not block anything on its own. To gate merges, add a
+branch protection rule or ruleset on your default branch requiring the status
+check named `LGTM / review-gate` (or whatever you set `check-name` to).
+
+Do this **after** you have watched the check go green and red correctly on a
+real pull request. Marking it required before it has ever run successfully
+gates your default branch on a check that may be broken, on the same commit
+that broke it.
+
+### Routing: labels and reviewers
+
+`label` and `request-reviewers` are about getting the right eyes on a flagged
+pull request, not about blocking it:
+
+```yaml
+        with:
+          label: 'needs-review'
+          request-reviewers: 'alice,my-org/platform-team'
+```
+
+A plain login requests a user; `org/team` requests a team. Create the label in
+the repo first.
+
+The label tracks whether the change is *complex*, not whether it is currently
+*blocked* — an approved pull request keeps its `needs-review` label, so "which
+changes were complex?" stays an answerable question after the fact. It is
+removed only when a pull request shrinks back below the thresholds.
+
+### Troubleshooting
+
+**The check never appears.** The workflow needs `checks: write`. Without it the
+API call 403s and the action logs a warning rather than failing, so check the
+job log for `could not publish the ... check run`.
+
+**Nothing appears on pull requests from forks.** Fork pull requests get a
+read-only `GITHUB_TOKEN`, so no check can be published. Fork support is out of
+scope; if you need it, split the workflow in two and publish the check from a
+privileged `workflow_run` workflow that consumes an artifact from the
+unprivileged one. Do not reach for `pull_request_target` — it builds
+fork-authored code with a write-scoped token.
+
+**A complex pull request is green.** It has been approved. See
+[What the check means](#what-the-check-means).
+
+**The check shows in the UI but the merge gate ignores it.** Something is
+publishing against the merge commit rather than the head commit. The action
+refuses to guess here and errors out when no head SHA is available, so this
+should only happen with a hand-rolled variant.
+
+**Approving does not turn it green.** The workflow is missing the
+`pull_request_review` trigger, or its `actions/checkout` is missing
+`ref: ${{ github.event.pull_request.head.sha }}` and is analyzing the base
+branch.
 ## Formal verification
 
 The decision rule lives in Alloy and the Go implementation is tested against
@@ -310,6 +357,7 @@ make check       # check the seven assertions in alloy/properties.als
 make scenarios   # confirm every scenario in alloy/scenarios.als is satisfiable
 make generate    # solve scenarios -> XML -> regenerate eval/evaluator_alloy_test.go
 make test        # go test ./...
+make test-action # exercise the action's approval logic against saved payloads
 make verify      # generate + build + test
 make all         # check + scenarios + generate + build
 make clean       # remove bin/ and Alloy output

@@ -6,7 +6,7 @@ RUNTIME = $(ALLOY_DIR)/runtime
 OUTPUT = $(ALLOY_DIR)/output
 GO ?= go
 
-.PHONY: setup check scenarios all verify generate generate-instances build test clean
+.PHONY: setup check scenarios all verify generate generate-instances build test test-action clean
 
 $(JAR):
 	@echo "Downloading Alloy $(ALLOY_VERSION)..."
@@ -66,6 +66,13 @@ build:
 # Run the Go test suite without regenerating the Alloy-driven test.
 test:
 	$(GO) test ./...
+
+# Exercise the GitHub Action's approval reduction against saved review
+# payloads. The jq program is extracted from action.yml, so this cannot drift
+# from what the action runs.
+test-action:
+	@echo "=== Action approval logic ==="
+	./scripts/test-approval.sh
 
 all: check scenarios generate build
 	@echo "=== All checks complete ==="

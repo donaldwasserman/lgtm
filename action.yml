@@ -28,10 +28,18 @@ inputs:
     description: 'Set to true when the PR author is a trusted top-20% contributor (exempts review).'
     required: false
     default: 'false'
+  check-name:
+    description: >-
+      Name of the check run this action publishes. This is the exact string you
+      mark as a required status check in branch protection, so renaming it
+      silently un-requires the old one. Empty disables publishing the check.
+    required: false
+    default: 'LGTM / review-gate'
   label:
     description: >-
       Label to add to the pull request when review is required, and to remove
-      when it is not. Empty disables labelling.
+      when it is not. Routing only - the merge gate is the check run. Empty
+      disables labelling.
     required: false
     default: ''
   request-reviewers:
@@ -40,25 +48,29 @@ inputs:
       login requests a user; "org/team" requests a team.
     required: false
     default: ''
-  fail-on-review-required:
-    description: >-
-      Fail the step when review is required (default true, preserving the
-      original behaviour). Set to false to report the result as a passing
-      signal and gate the merge on the label or the requested reviewers
-      instead - see "Enforcing the result" in the README.
-    required: false
-    default: 'true'
   github-token:
-    description: 'Token used to label the PR and request reviewers. Needs pull-requests: write.'
+    description: >-
+      Token used to publish the check run, read reviews, label the PR and
+      request reviewers. Needs checks: write and pull-requests: write.
     required: false
     default: ${{ github.token }}
 
 outputs:
   requires-review:
-    description: '"true" when the change requires human review, "false" otherwise.'
+    description: >-
+      '"true" when the change requires human review, "false" otherwise. Empty
+      when lgtm could not run - test for "true" explicitly, since an empty
+      value compared against "false" reads as "not required".'
     value: ${{ steps.evaluate.outputs.requires-review }}
+  check-conclusion:
+    description: >-
+      '"success" or "failure" - the conclusion published to the check run. It is
+      "failure" both when review is required without approval and when lgtm
+      itself failed. Empty when no check was published: outside a pull request,
+      or with check-name disabled.'
+    value: ${{ steps.check.outputs.conclusion }}
   report:
-    description: 'The full lgtm JSON report.'
+    description: 'The full lgtm JSON report. Empty when lgtm could not run.'
     value: ${{ steps.evaluate.outputs.report }}
 
 runs:
@@ -69,8 +81,9 @@ runs:
       working-directory: ${{ github.action_path }}
       run: go build -o "$GITHUB_ACTION_PATH/bin/lgtm" ./cmd/lgtm
 
-    # Records the decision without failing, so later steps can act on it.
-    # Exit 2 is a genuine tool failure and is still surfaced immediately.
+    # Records the decision without ever exiting non-zero, so the check run is
+    # still published when lgtm fails. The job's own failure is decided by the
+    # final step instead.
     - name: 'Evaluate review complexity'
       id: evaluate
       shell: bash
@@ -82,6 +95,8 @@ runs:
         LGTM_EPSILON_TRIVIAL: ${{ inputs.epsilon-trivial }}
         LGTM_TOP_TWENTY_INPUT: ${{ inputs.top-twenty }}
       run: |
+        set -uo pipefail
+
         report=$("$GITHUB_ACTION_PATH/bin/lgtm" \
           --base "$LGTM_BASE" \
           --head "$LGTM_HEAD" \
@@ -91,22 +106,253 @@ runs:
           --top-twenty="$LGTM_TOP_TWENTY_INPUT") && code=0 || code=$?
 
         echo "$report"
+        echo "exit-code=$code" >> "$GITHUB_OUTPUT"
 
-        if [ "$code" -ge 2 ]; then
-          echo "::error::lgtm failed with exit code $code"
-          exit "$code"
-        fi
+        case "$code" in
+          0) echo "requires-review=false" >> "$GITHUB_OUTPUT" ;;
+          1) echo "requires-review=true" >> "$GITHUB_OUTPUT" ;;
+          # Deliberately left unset: we have no verdict, and claiming "false"
+          # here would wave the change through on a broken analyzer.
+          *) echo "::error::lgtm failed with exit code $code" ;;
+        esac
 
-        if [ "$code" -eq 1 ]; then
-          echo "requires-review=true" >> "$GITHUB_OUTPUT"
-        else
-          echo "requires-review=false" >> "$GITHUB_OUTPUT"
-        fi
+        # Stash the report for the check-run step; $GITHUB_OUTPUT is not a
+        # reliable carrier for multi-line JSON containing arbitrary paths.
+        printf '%s' "$report" > "$RUNNER_TEMP/lgtm-report.json"
         {
           echo "report<<LGTM_REPORT_EOF"
           echo "$report"
           echo "LGTM_REPORT_EOF"
         } >> "$GITHUB_OUTPUT"
+
+    # Only consulted when review is required: a trivial PR should not go red
+    # because someone left a nitpick on it.
+    - name: 'Check for a qualifying approval'
+      id: approval
+      if: ${{ github.event.pull_request.number && steps.evaluate.outputs.requires-review == 'true' }}
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        PR: ${{ github.event.pull_request.number }}
+        REPO: ${{ github.repository }}
+      run: |
+        set -uo pipefail
+
+        reviews="$RUNNER_TEMP/lgtm-reviews.json"
+        if ! gh api "repos/$REPO/pulls/$PR/reviews" --paginate > "$reviews"; then
+          echo "::warning::could not read reviews (needs pull-requests: read); treating as unapproved"
+          echo "approved=false" >> "$GITHUB_OUTPUT"
+          echo "changes-requested=false" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        # Keep only reviews that carry a verdict, reduce to each reviewer's
+        # most recent one, and judge on those. Without the per-author
+        # reduction a reviewer who approves and later requests changes would
+        # still read as approving. DISMISSED is retained so that a dismissed
+        # approval correctly stops counting.
+        states=$(jq -r '
+          [ .[] | select(.state == "APPROVED"
+                      or .state == "CHANGES_REQUESTED"
+                      or .state == "DISMISSED") ]
+          | group_by(.user.login)
+          | map(max_by(.id).state)
+          | .[]
+        ' "$reviews")
+
+        approved=false
+        changes_requested=false
+        for state in $states; do
+          case "$state" in
+            APPROVED) approved=true ;;
+            CHANGES_REQUESTED) changes_requested=true ;;
+          esac
+        done
+
+        echo "approved=$approved" >> "$GITHUB_OUTPUT"
+        echo "changes-requested=$changes_requested" >> "$GITHUB_OUTPUT"
+        echo "approved=$approved changes_requested=$changes_requested"
+
+    # always(): a check run must be published on every path, including a failed
+    # build. A required check that is never posted blocks the PR forever.
+    - name: 'Publish check run'
+      id: check
+      if: ${{ always() && github.event.pull_request.number && inputs.check-name != '' }}
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        REPO: ${{ github.repository }}
+        CHECK_NAME: ${{ inputs.check-name }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        IS_FORK: ${{ github.event.pull_request.head.repo.fork }}
+        DETAILS_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        REQUIRES_REVIEW: ${{ steps.evaluate.outputs.requires-review }}
+        EXIT_CODE: ${{ steps.evaluate.outputs.exit-code }}
+        APPROVED: ${{ steps.approval.outputs.approved }}
+        CHANGES_REQUESTED: ${{ steps.approval.outputs.changes-requested }}
+      run: |
+        set -uo pipefail
+
+        # Branch protection evaluates checks against the PR head commit. The
+        # merge commit in github.sha produces a check run that shows in the UI
+        # and is ignored by the merge gate, so refuse rather than guess.
+        if [ -z "$HEAD_SHA" ]; then
+          echo "::error::no pull request head SHA available; cannot publish '$CHECK_NAME'"
+          exit 1
+        fi
+
+        if [ "$IS_FORK" = "true" ]; then
+          echo "::warning::pull requests from forks get a read-only token, so the '$CHECK_NAME' check cannot be published. Fork PRs are unsupported; see the README."
+        fi
+
+        if [ "$REQUIRES_REVIEW" = "true" ]; then
+          if [ "$CHANGES_REQUESTED" = "true" ]; then
+            state=changes-requested
+          elif [ "$APPROVED" = "true" ]; then
+            state=approved
+          else
+            state=awaiting
+          fi
+        elif [ "$REQUIRES_REVIEW" = "false" ]; then
+          state=not-required
+        else
+          state=failed
+        fi
+
+        summary="$RUNNER_TEMP/lgtm-summary.md"
+        case "$state" in
+          not-required)
+            conclusion=success
+            title='No review required'
+            echo 'This change is below the review thresholds.' > "$summary"
+            ;;
+          approved)
+            conclusion=success
+            title='Review required — approved'
+            {
+              echo 'This change is above the review thresholds, **and it has been approved**.'
+              echo
+              echo 'The check is green because a human vouched for the change, not because'
+              echo 'the change is simple. A green check here means "either simple, or reviewed".'
+            } > "$summary"
+            ;;
+          awaiting)
+            conclusion=failure
+            title='Review required — awaiting approval'
+            {
+              echo 'This change is above the review thresholds and has no approving review yet.'
+              echo
+              echo 'The check clears itself: it turns green as soon as someone approves the'
+              echo 'pull request. No re-run is needed.'
+            } > "$summary"
+            ;;
+          changes-requested)
+            conclusion=failure
+            title='Changes requested'
+            {
+              echo 'This change is above the review thresholds and a reviewer has requested'
+              echo 'changes. Approvals resume counting once the request is resolved or dismissed.'
+            } > "$summary"
+            ;;
+          failed)
+            conclusion=failure
+            title='Analysis failed — could not evaluate'
+            {
+              echo "lgtm did not produce a verdict (exit code: ${EXIT_CODE:-none})."
+              echo
+              echo 'This is a tool failure, not a statement about the change.'
+              echo 'The check fails closed so a broken analyzer cannot wave a PR through.'
+            } > "$summary"
+            ;;
+        esac
+
+        report="$RUNNER_TEMP/lgtm-report.json"
+        [ -s "$report" ] || printf '' > "$report"
+
+        if jq -e . "$report" >/dev/null 2>&1; then
+          jq -r '
+            "",
+            "| Metric | Value | Threshold |",
+            "| --- | --- | --- |",
+            "| Depth (modified) | \(.metrics.DepthMod) | θ_depth \(.thresholds.ThetaDepth) |",
+            "| Breadth | \(.metrics.Breadth) | θ_breadth \(.thresholds.ThetaBreadth) |",
+            "| Depth (total) | \(.metrics.DepthTotal) | ε_trivial \(.thresholds.EpsilonTrivial) |",
+            "| Depth (new code) | \(.metrics.DepthNew) | not consulted |",
+            "| Trusted contributor | \(.metrics.TopTwenty) | exempts review |",
+            "| Unparsed files | \(.metrics.Unparsed) | forces review |",
+            "",
+            "\(.files | length) file(s) changed."
+          ' "$report" >> "$summary"
+
+          annotations=$(jq -c '
+            [ .parseErrors // [] | .[] | {
+                path: .path,
+                start_line: 1,
+                end_line: 1,
+                annotation_level: "failure",
+                title: "Unparseable file",
+                message: "lgtm could not parse this file on the \(.side) side: \(.reason). An unparseable tree always requires review."
+              } ] | .[0:50]
+          ' "$report")
+
+          # The Checks API caps output.text at 64KB and rejects the whole
+          # check run if it is exceeded - which would leave the PR with no
+          # check at all, the one outcome this action must never produce.
+          if [ "$(wc -c < "$report")" -gt 60000 ]; then
+            text='The full report is too large to embed here; see the job log linked above.'
+          else
+            text=$(jq -rn --rawfile r "$report" '
+              "<details><summary>Full lgtm report</summary>\n\n```json\n" + $r + "\n```\n\n</details>"
+            ')
+          fi
+        else
+          annotations='[]'
+          text=''
+        fi
+
+        payload="$RUNNER_TEMP/lgtm-check.json"
+        jq -n \
+          --arg name "$CHECK_NAME" \
+          --arg conclusion "$conclusion" \
+          --arg details_url "$DETAILS_URL" \
+          --arg title "$title" \
+          --rawfile summary "$summary" \
+          --arg text "$text" \
+          --argjson annotations "$annotations" \
+          '{
+            name: $name,
+            status: "completed",
+            conclusion: $conclusion,
+            details_url: $details_url,
+            output: {
+              title: $title,
+              summary: $summary,
+              text: $text,
+              annotations: $annotations
+            }
+          }' > "$payload"
+
+        echo "conclusion=$conclusion" >> "$GITHUB_OUTPUT"
+        echo "state=$state" >> "$GITHUB_OUTPUT"
+        echo "publishing '$CHECK_NAME' as $conclusion ($title) on $HEAD_SHA"
+
+        # Reuse the run for this SHA so repeated evaluations (a push, then an
+        # approval) update one entry instead of stacking duplicates.
+        encoded=$(jq -rn --arg n "$CHECK_NAME" '$n|@uri')
+        existing=$(gh api "repos/$REPO/commits/$HEAD_SHA/check-runs?check_name=$encoded" \
+          --jq '.check_runs[0].id // empty' 2>/dev/null) || existing=''
+
+        if [ -n "$existing" ]; then
+          ok=$(gh api -X PATCH "repos/$REPO/check-runs/$existing" --input "$payload" --silent && echo yes || echo no)
+        else
+          jq --arg sha "$HEAD_SHA" '. + {head_sha: $sha}' "$payload" > "$payload.new"
+          mv "$payload.new" "$payload"
+          ok=$(gh api -X POST "repos/$REPO/check-runs" --input "$payload" --silent && echo yes || echo no)
+        fi
+
+        if [ "$ok" != "yes" ]; then
+          echo "::warning::could not publish the '$CHECK_NAME' check run. The workflow needs 'checks: write', and pull requests from forks cannot publish checks at all."
+        fi
 
     - name: 'Flag the pull request'
       if: ${{ github.event.pull_request.number && (inputs.label != '' || inputs.request-reviewers != '') }}
@@ -119,6 +365,9 @@ runs:
         PR: ${{ github.event.pull_request.number }}
         REPO: ${{ github.repository }}
       run: |
+        # The label tracks whether the change is complex, not whether it is
+        # currently blocked, so an approved PR keeps it. Enforcement is the
+        # check run's job.
         if [ "$REQUIRES_REVIEW" != "true" ]; then
           # Clear a stale label so a PR that shrinks stops being flagged.
           if [ -n "$LABEL" ]; then
@@ -155,9 +404,13 @@ runs:
           fi
         fi
 
-    - name: 'Require review'
-      if: ${{ steps.evaluate.outputs.requires-review == 'true' && inputs.fail-on-review-required == 'true' }}
+    # The job is red only when lgtm itself broke. A change that requires review
+    # is reported by the check run, which keeps the two signals distinct.
+    - name: 'Report tool failure'
+      if: ${{ always() && steps.evaluate.outputs.requires-review == '' }}
       shell: bash
+      env:
+        EXIT_CODE: ${{ steps.evaluate.outputs.exit-code }}
       run: |
-        echo "::error::This change requires human review; see the lgtm report above."
+        echo "::error::lgtm did not produce a verdict (exit code: ${EXIT_CODE:-none})"
         exit 1
