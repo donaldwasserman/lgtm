@@ -12,7 +12,7 @@ import (
 var alloyCases = []struct {
 	name                                     string
 	depthMod, depthNew, breadth, depthTotal  int
-	topTwenty, unparsed                      bool
+	trusted, unparsed                        bool
 	thetaDepth, thetaBreadth, epsilonTrivial int
 	want                                     bool
 }{
@@ -39,7 +39,7 @@ func TestAlloyInstances(t *testing.T) {
 					DepthNew:   tc.depthNew,
 					Breadth:    tc.breadth,
 					DepthTotal: tc.depthTotal,
-					TopTwenty:  tc.topTwenty,
+					Trusted:    tc.trusted,
 					Unparsed:   tc.unparsed,
 				},
 				eval.Thresholds{

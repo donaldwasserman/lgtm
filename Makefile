@@ -91,12 +91,14 @@ build:
 test:
 	$(GO) test ./...
 
-# Exercise the GitHub Action's approval reduction against saved review
-# payloads. The jq program is extracted from action.yml, so this cannot drift
-# from what the action runs.
+# Exercise the GitHub Action's own logic - the approval reduction and the
+# trusted-contributor policy - against saved payloads. Every jq program is
+# extracted from action.yml, so these cannot drift from what the action runs.
 test-action:
 	@echo "=== Action approval logic ==="
 	./scripts/test-approval.sh
+	@echo "=== Action trust logic ==="
+	./scripts/test-trust.sh
 
 all: check scenarios check-action scenarios-action generate build
 	@echo "=== All checks complete ==="

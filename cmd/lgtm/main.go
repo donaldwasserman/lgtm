@@ -52,7 +52,7 @@ func run() int {
 	thetaDepth := fs.Int("theta-depth", 7, "high depth threshold")
 	thetaBreadth := fs.Int("theta-breadth", 6, "high breadth threshold")
 	epsilonTrivial := fs.Int("epsilon-trivial", 1, "below-depth trivial epsilon")
-	topTwenty := fs.Bool("top-twenty", false, "submitter is a trusted top-20% contributor (exempts review)")
+	trusted := fs.Bool("trusted", false, "submitter is a trusted contributor (exempts review); the caller decides who is trusted")
 	help := fs.Bool("help", false, "show usage")
 
 	fs.Usage = func() {
@@ -77,7 +77,7 @@ func run() int {
 		EpsilonTrivial: *epsilonTrivial,
 	}
 
-	out, requiresReview, err := analyze(*base, *head, thr, *topTwenty)
+	out, requiresReview, err := analyze(*base, *head, thr, *trusted)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		return 2
@@ -98,7 +98,7 @@ func run() int {
 
 // analyze scans both trees, diffs them, computes metrics, and returns the
 // JSON report plus the review decision.
-func analyze(base, head string, thr eval.Thresholds, topTwenty bool) (report, bool, error) {
+func analyze(base, head string, thr eval.Thresholds, trusted bool) (report, bool, error) {
 	ctx := context.Background()
 	baseFiles, err := parse.Scan(ctx, base)
 	if err != nil {
@@ -114,7 +114,7 @@ func analyze(base, head string, thr eval.Thresholds, topTwenty bool) (report, bo
 		collectParseErrors("head", headFiles)...)
 
 	res := diff.Diff(baseFiles, headFiles)
-	m := metrics.Compute(res, topTwenty, len(parseErrs) > 0)
+	m := metrics.Compute(res, trusted, len(parseErrs) > 0)
 	decision := eval.RequiresReview(m, thr)
 
 	rep := report{

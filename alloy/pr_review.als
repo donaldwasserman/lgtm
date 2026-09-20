@@ -16,7 +16,7 @@ one sig Metrics {
   depth_new: one Int,
   breadth: one Int,
   depth_total: one Int,
-  topTwenty: one BOOL,
+  trusted: one BOOL,
   unparsed: one BOOL
 }
 
@@ -39,8 +39,10 @@ pred broadAndNontrivial[m: Metrics] {
   gt[int[m.depth_total], int[Thresholds.epsilon_trivial]]
 }
 
-pred isTopTwenty[m: Metrics] {
-  m.topTwenty = TRUE
+-- The submitter is exempt from review. Which contributors are trusted is a
+-- policy the caller resolves; this model consumes only the verdict.
+pred isTrusted[m: Metrics] {
+  m.trusted = TRUE
 }
 
 -- Some file on either side could not be parsed, so the metrics below
@@ -49,13 +51,13 @@ pred isUnparsed[m: Metrics] {
   m.unparsed = TRUE
 }
 
--- A trusted (top-20%) contributor is exempt from review,
--- overriding the normal depth/breadth rules.
+-- A trusted contributor is exempt from review, overriding the normal
+-- depth/breadth rules.
 --
 -- An unparseable tree overrides everything, the exemption included: when the
 -- metrics cannot describe the change, the gate must not wave it through.
 pred requiresReview[m: Metrics] {
   isUnparsed[m] or
-  ((not isTopTwenty[m]) and
+  ((not isTrusted[m]) and
    (highDepthExisting[m] or broadAndNontrivial[m]))
 }

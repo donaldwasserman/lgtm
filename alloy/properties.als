@@ -22,14 +22,14 @@ assert TrivialDepthExemption {
 
 assert HighDepthModRequiresReview {
   all m: Metrics | {
-    (not isTopTwenty[m] and highDepthExisting[m])
+    (not isTrusted[m] and highDepthExisting[m])
     implies requiresReview[m]
   }
 }
 
 assert BroadNontrivialRequiresReview {
   all m: Metrics | {
-    (not isTopTwenty[m] and broadAndNontrivial[m])
+    (not isTrusted[m] and broadAndNontrivial[m])
     implies requiresReview[m]
   }
 }
@@ -45,18 +45,20 @@ assert LowEverythingNeverRequires {
 
 assert MonotoneInDepthMod {
   all m1, m2: Metrics | {
-    (not isTopTwenty[m1] and not isTopTwenty[m2] and
+    (not isTrusted[m1] and not isTrusted[m2] and
      gte[int[m1.depth_mod], int[m2.depth_mod]] and
      requiresReview[m2])
     implies requiresReview[m1]
   }
 }
 
--- The top-20% exemption applies only when the change could actually be
--- measured; an unparseable tree is reviewed no matter who submitted it.
+-- The trusted-contributor exemption applies only when the change could
+-- actually be measured; an unparseable tree is reviewed no matter who
+-- submitted it. Note this binds the exemption BIT, not its provenance: how a
+-- caller decides who is trusted is deliberately outside the model.
 assert TrustedContributorExemption {
   all m: Metrics | {
-    (isTopTwenty[m] and not isUnparsed[m]) implies not requiresReview[m]
+    (isTrusted[m] and not isUnparsed[m]) implies not requiresReview[m]
   }
 }
 

@@ -104,7 +104,7 @@ assert UnparsedNeverGreenWithoutApproval {
 assert TrustedContributorStaysGreen {
   all g: Gate | {
     (publishable[g] and faithful[g] and g.outcome != Failed and
-     isTopTwenty[Metrics] and not isUnparsed[Metrics])
+     isTrusted[Metrics] and not isUnparsed[Metrics])
     implies isGreen[g]
   }
 }

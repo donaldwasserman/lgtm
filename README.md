@@ -11,13 +11,16 @@ depth. Those numbers feed a decision rule that is specified formally in Alloy
 A PR requires review when:
 
 ```
-requiresReview = unparsed || (!topTwenty && (depthMod >= θ_depth ||
-                              (breadth >= θ_breadth && depthTotal > ε_trivial)))
+requiresReview = unparsed || (!trusted && (depthMod >= θ_depth ||
+                             (breadth >= θ_breadth && depthTotal > ε_trivial)))
 ```
 
-Trusted (top-20%) contributors are exempt, which overrides both depth and
-breadth rules. A tree containing a file that could not be parsed overrides even
-that: with no reliable metrics the gate refuses to wave the change through.
+Trusted contributors are exempt, which overrides both depth and breadth rules.
+`trusted` is an opaque input: *which* contributors are trusted is a policy the
+caller configures, deliberately outside the decision rule — see
+[Trust modes](#trust-modes). A tree containing a file that could not be parsed
+overrides even that: with no reliable metrics the gate refuses to wave the
+change through.
 
 ## Requirements
 
@@ -50,7 +53,7 @@ lgtm --base <dir> --head <dir> [flags]
 | `--theta-depth` | `7` | High depth threshold (θ_depth) |
 | `--theta-breadth` | `6` | High breadth threshold (θ_breadth) |
 | `--epsilon-trivial` | `1` | Depth at or below which a change is trivial (ε_trivial) |
-| `--top-twenty` | `false` | Submitter is a trusted top-20% contributor (exempts review) |
+| `--trusted` | `false` | Submitter is a trusted contributor (exempts review). The caller decides who is trusted |
 | `--help` | | Show usage |
 
 ### Exit codes
@@ -75,7 +78,7 @@ $ lgtm --base /tmp/base --head /tmp/head
     "DepthNew": 1,
     "Breadth": 1,
     "DepthTotal": 6,
-    "TopTwenty": false,
+    "Trusted": false,
     "Unparsed": false
   },
   "thresholds": {
@@ -203,6 +206,7 @@ jobs:
           theta-depth: '7'
           theta-breadth: '6'
           epsilon-trivial: '1'
+          trust-mode: 'codeowners'   # see "Trust modes"; 'none' exempts nobody
           check-name: 'LGTM / review-gate'
           label: 'needs-review'
 ```
@@ -250,7 +254,10 @@ wave pull requests through.
 | `theta-depth` | `7` | High depth threshold |
 | `theta-breadth` | `6` | High breadth threshold |
 | `epsilon-trivial` | `1` | Trivial-depth upper bound |
-| `top-twenty` | `false` | Author is a trusted top-20% contributor |
+| `trust-mode` | `none` | `none`, `top-percent`, `top-count`, or `codeowners` |
+| `trust-percent` | `20` | Percentile cutoff for `top-percent` |
+| `trust-count` | `10` | Rank cutoff for `top-count` |
+| `author` | PR author login | Who the exemption is evaluated against |
 | `check-name` | `LGTM / review-gate` | Name of the published check run. Empty disables it |
 | `label` | *(empty)* | Label applied to flagged pull requests |
 | `request-reviewers` | *(empty)* | Comma-separated reviewers to request on flagged pull requests |
@@ -290,6 +297,84 @@ gate on `check-conclusion` instead if you want fail-closed behaviour:
 
 The job itself fails only when `lgtm` breaks. A change that requires review is
 reported by the check run, not by a red job, so the two signals stay distinct.
+
+### Trust modes
+
+The trusted-contributor exemption is resolved by the action before `lgtm` runs;
+the binary receives only the resulting boolean. Set `trust-mode` to exactly one
+of:
+
+| Mode | Trusted when | Needs |
+| --- | --- | --- |
+| `none` *(default)* | never | — |
+| `top-percent` | the author is in the top `trust-percent`% of contributors | contributors API |
+| `top-count` | the author is one of the top `trust-count` contributors | contributors API |
+| `codeowners` | the author owns **at least one** changed file | a CODEOWNERS file |
+
+`codeowners` is the mode to reach for first: it needs no extra token scope, no
+network ranking, and it is reproducible from the repository contents alone.
+
+**Ranking modes** rank by all-time commit count from
+`GET /repos/{owner}/{repo}/contributors`, which is keyed by GitHub login and so
+compares directly against the pull request author. Accounts of type `Bot` are
+excluded, so a busy `dependabot[bot]` neither inflates the denominator nor
+occupies a top slot.
+
+Two rules are worth knowing because they are easy to get wrong:
+
+- **The cutoff rounds up.** The top 20% of three contributors is one person,
+  not zero. A mode you deliberately enabled should not be silently inert on a
+  small repo.
+- **Ties at the cutoff are included.** With commit counts `10, 5, 5, 5, 1`, a
+  cutoff of two expands to four. Neither the contributors API nor
+  `git shortlog` specifies how ties are ordered, and a merge gate must not flip
+  on an unspecified sort.
+
+A consequence worth planning around: on a repo where one person writes most
+commits, any ranking mode exempts that person from nearly every pull request.
+That is why this repository's own workflow uses `none`. Note also that the
+contributors API caps at 500 entries and is served from a periodic cache, so
+`top-percent` computes against a wrong denominator on very large repos —
+prefer `top-count` or `codeowners` there.
+
+**CODEOWNERS mode** reads the first of `.github/CODEOWNERS`, `CODEOWNERS`, or
+`docs/CODEOWNERS` from the head tree, and matches it against the pull request's
+real file list from the API — not the `files[]` that `lgtm` reports, which
+contains only files it could parse, so ownership over `.md` or `.yml` paths
+would otherwise be invisible.
+
+Ownership is **last matching rule wins**, as CODEOWNERS specifies. Given
+
+```
+*        @alice
+*.go     @bob
+```
+
+the owner of `x.go` is `@bob` alone. Treating any matching rule as ownership
+would trust `@alice` for every Go file.
+
+The supported glob subset:
+
+| Form | Meaning |
+| --- | --- |
+| `*` | any characters within one path segment; never crosses `/` |
+| `?` | a single character within one segment |
+| `**` | zero or more whole segments |
+| leading `/`, or any embedded `/` | anchored at the repository root |
+| trailing `/` | a directory, and everything beneath it |
+| no `/` at all | matches a basename at any depth |
+
+So `docs/*` owns `docs/a.md` but not `docs/a/b.md`, while `docs/` owns both.
+Write a trailing slash when you mean a directory. Section headers
+(`[Section]`) are skipped, and `!`-negated patterns are skipped because
+CODEOWNERS does not support negation.
+
+`@org/team` owners are expanded to their members with `gh api`, which needs the
+`read:org` scope. The default `GITHUB_TOKEN` does not carry it for org teams —
+when expansion fails the action emits a warning and those members are **not**
+trusted. Every failure path here resolves the same way: no CODEOWNERS file, an
+unreachable API, or an unexpandable team all mean *not trusted*, so the gate
+can only ever become stricter, never looser.
 
 ### Making it a required check
 
@@ -346,6 +431,15 @@ should only happen with a hand-rolled variant.
 `pull_request_review` trigger, or its `actions/checkout` is missing
 `ref: ${{ github.event.pull_request.head.sha }}` and is analyzing the base
 branch.
+
+**Nobody is ever exempt.** `trust-mode` defaults to `none`. If it is set and
+still nothing is exempt, check the job log: the action warns when there is no
+CODEOWNERS file, when the contributors API is unreachable, and when an
+`@org/team` could not be expanded for lack of `read:org`. Each of those
+resolves to *not trusted* by design.
+
+**Everyone is exempt.** A ranking mode on a repo with few contributors trusts
+whoever writes most of the commits. Use `codeowners`, or `none`.
 ## Formal verification
 
 The decision rule lives in Alloy and the Go implementation is tested against
@@ -359,7 +453,7 @@ make check-action     # check the assertions in alloy/check_properties.als
 make scenarios-action # confirm every scenario in alloy/check_scenarios.als is satisfiable
 make generate         # solve scenarios -> XML -> regenerate eval/evaluator_alloy_test.go
 make test             # go test ./...
-make test-action      # exercise the action's approval logic against saved payloads
+make test-action      # exercise the action's approval and trust logic against fixtures
 make verify           # generate + build + test
 make all              # check + scenarios + check-action + scenarios-action + generate + build
 make clean            # remove bin/ and Alloy output
@@ -383,7 +477,9 @@ Properties currently checked (`alloy/properties.als`):
 - `LowEverythingNeverRequires`
 - `MonotoneInDepthMod` — raising `depthMod` never flips review off
 - `TrustedContributorExemption` — a trusted submitter is exempt, provided the
-  tree parsed
+  tree parsed. Note this binds the exemption *bit*; how a caller decides who is
+  trusted (see [Trust modes](#trust-modes)) is deliberately outside the model,
+  which is what lets the policy change without reopening the proof
 - `UnparsedAlwaysRequiresReview` — an unparseable tree always requires review
 
 ### The check-run layer

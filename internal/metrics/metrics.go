@@ -8,17 +8,17 @@ import (
 	"lgtm/internal/model"
 )
 
-// Compute converts a diff result and the trusted-submitter flag into
+// Compute converts a diff result and the caller's trust verdict into
 // eval.Metrics:
 //
 //	depthModified: max depth of modified + deleted (existing) AST nodes
 //	depthNew:      max depth of newly added nodes
 //	depthTotal:    max depth across all changed nodes
 //	breadth:       number of distinct files actually changed
-//	topTwenty:     caller-supplied trusted-submitter exemption
+//	trusted:       caller-supplied contributor exemption
 //	unparsed:      caller-supplied flag that some file failed to parse
-func Compute(res *diff.Result, topTwenty, unparsed bool) eval.Metrics {
-	m := eval.Metrics{TopTwenty: topTwenty, Unparsed: unparsed}
+func Compute(res *diff.Result, trusted, unparsed bool) eval.Metrics {
+	m := eval.Metrics{Trusted: trusted, Unparsed: unparsed}
 	seenFiles := map[string]bool{}
 	for _, fc := range res.Files {
 		if len(fc.Changes) == 0 {

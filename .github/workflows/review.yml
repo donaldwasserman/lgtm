@@ -47,6 +47,11 @@ jobs:
           theta-depth: '7'
           theta-breadth: '6'
           epsilon-trivial: '1'
-          top-twenty: ${{ contains(fromJson('["trusted-user-1","trusted-user-2"]'), github.actor) }}
+          # Deliberately 'none' for this repo. Any ranking mode would exempt
+          # the top contributor, who writes nearly every PR here, so the gate
+          # would never fire on its own repository. Set trust-mode to
+          # 'codeowners' (or a ranking mode) on a repo with several active
+          # contributors; see "Trust modes" in the README.
+          trust-mode: 'none'
           check-name: 'LGTM / review-gate'
           label: 'needs-review'
