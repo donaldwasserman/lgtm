@@ -352,15 +352,17 @@ The decision rule lives in Alloy and the Go implementation is tested against
 solver-produced instances rather than hand-written expectations.
 
 ```bash
-make setup       # download alloy.jar (Alloy 6.2.0)
-make check       # check the seven assertions in alloy/properties.als
-make scenarios   # confirm every scenario in alloy/scenarios.als is satisfiable
-make generate    # solve scenarios -> XML -> regenerate eval/evaluator_alloy_test.go
-make test        # go test ./...
-make test-action # exercise the action's approval logic against saved payloads
-make verify      # generate + build + test
-make all         # check + scenarios + generate + build
-make clean       # remove bin/ and Alloy output
+make setup            # download alloy.jar (Alloy 6.2.0)
+make check            # check the assertions in alloy/properties.als
+make scenarios        # confirm every scenario in alloy/scenarios.als is satisfiable
+make check-action     # check the assertions in alloy/check_properties.als
+make scenarios-action # confirm every scenario in alloy/check_scenarios.als is satisfiable
+make generate         # solve scenarios -> XML -> regenerate eval/evaluator_alloy_test.go
+make test             # go test ./...
+make test-action      # exercise the action's approval logic against saved payloads
+make verify           # generate + build + test
+make all              # check + scenarios + check-action + scenarios-action + generate + build
+make clean            # remove bin/ and Alloy output
 ```
 
 `make check` fails if any assertion yields a counterexample; `make scenarios`
@@ -384,6 +386,42 @@ Properties currently checked (`alloy/properties.als`):
   tree parsed
 - `UnparsedAlwaysRequiresReview` — an unparseable tree always requires review
 
+### The check-run layer
+
+`alloy/pr_review.als` answers "does this change need a human?".
+`alloy/check_run.als` answers the different question the pull request's status
+check actually asks: "what does the gate say?" — which also depends on whether
+a human has since shown up. It models the analyzer outcome, the per-reviewer
+reduction over review states, and the state/conclusion mapping in
+`WORKFLOW_LOGIC.md`, and its branch precedence mirrors the "Publish check run"
+step of `action.yml`.
+
+Properties checked (`alloy/check_properties.als`):
+
+- `AlwaysPublishesOnPullRequests` — a publishable evaluation always produces a
+  conclusion, so a required check is never silently absent
+- `AnalysisFailureFailsClosed` — a crashed analyzer is never green
+- `ApprovalDoesNotExcuseFailure` — nor is it green once approved
+- `GreenMeansSimpleOrApproved` — green means below the thresholds, or above
+  them and approved; nothing else
+- `ChangesRequestedOutranksApproval` — one block outranks any number of
+  approvals
+- `ApprovalClearsTheCheck` — approving is sufficient to turn it green, with no
+  re-analysis and no change to the diff
+- `CommentsDoNotChangeTheVerdict` — comment-only reviews are inert, so a
+  comment left after an approval cannot revoke it
+- `LatestVerdictWins` — a superseded verdict never counts
+- `UnparsedNeverGreenWithoutApproval` — bridges to `pr_review`: an unparseable
+  tree cannot go green on its own
+- `TrustedContributorStaysGreen` — bridges to `pr_review`: the top-20%
+  exemption survives the check layer
+
+`alloy/check_scenarios.als` holds one satisfiable scenario per row of
+`WORKFLOW_LOGIC.md` plus the review reductions the table leaves implicit.
+They double as non-vacuity witnesses: an assertion above that held only
+because its antecedent was unsatisfiable would surface here as an UNSAT
+scenario.
+
 ## Layout
 
 ```
@@ -395,4 +433,7 @@ internal/diff/   AST alignment and insert/delete/modify classification
 internal/metrics/ diff result -> eval.Metrics
 internal/model/  language-agnostic AST and change types
 alloy/           formal spec, properties, scenarios
+                 pr_review.als  + properties.als       + scenarios.als
+                 check_run.als  + check_properties.als + check_scenarios.als
+scripts/         action-level tests (approval reduction fixtures)
 ```
