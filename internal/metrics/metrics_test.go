@@ -68,11 +68,11 @@ def app():
 	}
 }
 
-func TestTopTwentyPassesThrough(t *testing.T) {
+func TestTrustedPassesThrough(t *testing.T) {
 	res := &diff.Result{}
 	m := Compute(res, true, false)
-	if !m.TopTwenty {
-		t.Fatal("TopTwenty should pass through true")
+	if !m.Trusted {
+		t.Fatal("Trusted should pass through true")
 	}
 }
 

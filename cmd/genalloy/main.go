@@ -58,7 +58,7 @@ type Scenario struct {
 	DepthNew   int
 	Breadth    int
 	DepthTotal int
-	TopTwenty  bool
+	Trusted    bool
 	Unparsed   bool
 	// Thresholds are read from the instance rather than assumed, so a scenario
 	// that varies them is not silently tested against the defaults.
@@ -211,8 +211,8 @@ func instanceToScenario(inst Instance) (Scenario, error) {
 			s.Breadth = mustInt(value)
 		case "depth_total":
 			s.DepthTotal = mustInt(value)
-		case "topTwenty":
-			s.TopTwenty = strings.Contains(value, "TRUE")
+		case "trusted":
+			s.Trusted = strings.Contains(value, "TRUE")
 		case "unparsed":
 			s.Unparsed = strings.Contains(value, "TRUE")
 		case "theta_depth":
@@ -244,14 +244,14 @@ func writeTest(path, alsPath string, scenarios []Scenario) error {
 	b.WriteString("var alloyCases = []struct {\n")
 	b.WriteString("name string\n")
 	b.WriteString("depthMod, depthNew, breadth, depthTotal int\n")
-	b.WriteString("topTwenty, unparsed bool\n")
+	b.WriteString("trusted, unparsed bool\n")
 	b.WriteString("thetaDepth, thetaBreadth, epsilonTrivial int\n")
 	b.WriteString("want bool\n")
 	b.WriteString("}{\n")
 	for _, s := range scenarios {
 		fmt.Fprintf(&b, "{%q, %d, %d, %d, %d, %t, %t, %d, %d, %d, %t},\n",
 			s.Name, s.DepthMod, s.DepthNew, s.Breadth, s.DepthTotal,
-			s.TopTwenty, s.Unparsed,
+			s.Trusted, s.Unparsed,
 			s.ThetaDepth, s.ThetaBreadth, s.EpsilonTrivial, s.Want)
 	}
 	b.WriteString("}\n\n")
@@ -265,7 +265,7 @@ func writeTest(path, alsPath string, scenarios []Scenario) error {
 					DepthNew:   tc.depthNew,
 					Breadth:    tc.breadth,
 					DepthTotal: tc.depthTotal,
-					TopTwenty:  tc.topTwenty,
+					Trusted:    tc.trusted,
 					Unparsed:   tc.unparsed,
 				},
 				eval.Thresholds{

@@ -11,13 +11,16 @@ depth. Those numbers feed a decision rule that is specified formally in Alloy
 A PR requires review when:
 
 ```
-requiresReview = unparsed || (!topTwenty && (depthMod >= θ_depth ||
-                              (breadth >= θ_breadth && depthTotal > ε_trivial)))
+requiresReview = unparsed || (!trusted && (depthMod >= θ_depth ||
+                             (breadth >= θ_breadth && depthTotal > ε_trivial)))
 ```
 
-Trusted (top-20%) contributors are exempt, which overrides both depth and
-breadth rules. A tree containing a file that could not be parsed overrides even
-that: with no reliable metrics the gate refuses to wave the change through.
+Trusted contributors are exempt, which overrides both depth and breadth rules.
+`trusted` is an opaque input: *which* contributors are trusted is a policy the
+caller configures, deliberately outside the decision rule — see
+[Trust modes](#trust-modes). A tree containing a file that could not be parsed
+overrides even that: with no reliable metrics the gate refuses to wave the
+change through.
 
 ## Requirements
 
@@ -50,7 +53,7 @@ lgtm --base <dir> --head <dir> [flags]
 | `--theta-depth` | `7` | High depth threshold (θ_depth) |
 | `--theta-breadth` | `6` | High breadth threshold (θ_breadth) |
 | `--epsilon-trivial` | `1` | Depth at or below which a change is trivial (ε_trivial) |
-| `--top-twenty` | `false` | Submitter is a trusted top-20% contributor (exempts review) |
+| `--trusted` | `false` | Submitter is a trusted contributor (exempts review). The caller decides who is trusted |
 | `--help` | | Show usage |
 
 ### Exit codes
@@ -75,7 +78,7 @@ $ lgtm --base /tmp/base --head /tmp/head
     "DepthNew": 1,
     "Breadth": 1,
     "DepthTotal": 6,
-    "TopTwenty": false,
+    "Trusted": false,
     "Unparsed": false
   },
   "thresholds": {
@@ -139,28 +142,33 @@ Detected by extension; everything else is skipped, as are `.git`,
 
 ## GitHub Action
 
-The repo ships a composite action (`action.yml`). It builds the binary, runs it,
-and exposes the decision as the `requires-review` output. It can also label the
-pull request and request reviewers. A failing check does **not** block a merge
-on its own — see [Enforcing the result](#enforcing-the-result).
+The repo ships a composite action (`action.yml`). It builds the binary, runs
+it, and publishes the verdict as a **check run** on the pull request head
+commit. The check is red when the change needs review and nobody has approved
+it, and it clears itself the moment someone does — no re-run required.
+
+It can also label the pull request and request reviewers, which is routing
+rather than enforcement; the check run is the merge gate.
 
 ### Drop-in workflow
 
 Save as `.github/workflows/review-complexity.yml` in the repo you want to
-check. This is the recommended setup: the check stays green and reports its
-verdict by labelling the PR, so flagged changes are routed to a reviewer rather
-than blocked.
+check.
 
 ```yaml
 name: review-complexity
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  # Re-evaluating on review is what lets the check clear itself.
+  pull_request_review:
+    types: [submitted, dismissed]
 
-# Needed to label the PR and request reviewers.
 permissions:
   contents: read
-  pull-requests: write
+  checks: write          # publish the check run
+  pull-requests: write   # label the PR and read its reviews
 
 jobs:
   lgtm:
@@ -169,6 +177,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          # On pull_request_review the default ref is the base branch, so
+          # without this you would analyze the wrong tree.
+          ref: ${{ github.event.pull_request.head.sha }}
 
       - uses: actions/setup-go@v5
         with:
@@ -176,7 +187,12 @@ jobs:
 
       - name: Determine merge base
         id: base
-        run: echo "ref=$(git merge-base "origin/$GITHUB_BASE_REF" HEAD)" >> "$GITHUB_OUTPUT"
+        env:
+          # GITHUB_BASE_REF is not set on pull_request_review.
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          git fetch --no-tags origin "$BASE_REF"
+          echo "ref=$(git merge-base "origin/$BASE_REF" HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Extract base tree
         run: |
@@ -190,101 +206,82 @@ jobs:
           theta-depth: '7'
           theta-breadth: '6'
           epsilon-trivial: '1'
-          fail-on-review-required: 'false'
+          trust-mode: 'codeowners'   # see "Trust modes"; 'none' exempts nobody
+          check-name: 'LGTM / review-gate'
           label: 'needs-review'
 ```
 
-Then create the `needs-review` label in the repo, and pick a merge gate from
-[Enforcing the result](#enforcing-the-result).
+Both triggers matter. `pull_request_review` is what re-evaluates on approval;
+`ready_for_review` covers a draft going up for review, which does not fire
+`synchronize`.
 
-To make the check itself fail on a flagged PR instead, drop
-`fail-on-review-required` (it defaults to `'true'`) along with `label` and the
-`permissions` block — but read the polarity note in that section first.
+### What the check means
 
-To exempt trusted contributors, add:
+The check run is published against `github.event.pull_request.head.sha` — the
+commit branch protection actually evaluates — and reports one of:
 
-```yaml
-          top-twenty: ${{ contains(fromJson('["alice","bob"]'), github.actor) }}
-```
+| Conclusion | Title | Meaning |
+| --- | --- | --- |
+| `success` | No review required | Below the thresholds. |
+| `success` | Review required — approved | Above the thresholds, but approved. |
+| `failure` | Review required — awaiting approval | Above the thresholds, no approval yet. |
+| `failure` | Changes requested | Above the thresholds, a reviewer blocked it. |
+| `failure` | Analysis failed — could not evaluate | `lgtm` did not run. Fails closed. |
 
-`lgtm` compares two directories, so the workflow materialises the base tree
-itself; the action does no git work of its own.
+**Green does not mean "this change is simple."** It means *either* the change
+is below the thresholds *or* a human has approved it. A 40-file refactor with
+one approval is green, and that is the intended behaviour: the check asks
+"has this been looked at by someone, if it needed to be?", not "is this
+small?". The check's title says which of the two you are looking at.
 
-> **Paths must already be resolved.** `base` and `head` are passed to the tool
-> verbatim and are never expanded by a shell, so use `${{ runner.temp }}` and
-> `${{ github.workspace }}`. Writing `"$RUNNER_TEMP/lgtm/base"` passes that text
-> through literally and the run fails with exit 2.
+An approval counts when it is the reviewer's most recent verdict on the PR.
+Reviews that only comment are ignored, a dismissed approval stops counting,
+and one outstanding "changes requested" keeps the check red regardless of how
+many approvals sit alongside it. GitHub already prevents an author from
+approving their own pull request, so no extra self-approval handling is
+needed.
 
-`.github/workflows/review.yml` runs the same thing against this repo using the
-local `uses: ./` form.
+A failed analysis is deliberately `failure` rather than `neutral`: `neutral`
+counts as passing for required checks, so a crashed analyzer would silently
+wave pull requests through.
 
 ### Action inputs
 
-Beyond the four threshold inputs above:
-
 | Input | Default | Description |
 | --- | --- | --- |
-| `label` | `''` | Label added when review is required, removed when it is not. Empty disables labelling. |
-| `request-reviewers` | `''` | Comma-separated reviewers to request. A plain login requests a user; `org/team` requests a team. |
-| `fail-on-review-required` | `'true'` | Whether the step fails when review is required. Set to `'false'` to report the result without failing. |
-| `github-token` | `${{ github.token }}` | Token used to label and request reviewers. Needs `pull-requests: write`. |
+| `base` | *(required)* | Resolved path to the base tree |
+| `head` | *(required)* | Resolved path to the head tree |
+| `theta-depth` | `7` | High depth threshold |
+| `theta-breadth` | `6` | High breadth threshold |
+| `epsilon-trivial` | `1` | Trivial-depth upper bound |
+| `trust-mode` | `none` | `none`, `top-percent`, `top-count`, or `codeowners` |
+| `trust-percent` | `20` | Percentile cutoff for `top-percent` |
+| `trust-count` | `10` | Rank cutoff for `top-count` |
+| `author` | PR author login | Who the exemption is evaluated against |
+| `check-name` | `LGTM / review-gate` | Name of the published check run. Empty disables it |
+| `label` | *(empty)* | Label applied to flagged pull requests |
+| `request-reviewers` | *(empty)* | Comma-separated reviewers to request on flagged pull requests |
+| `github-token` | `${{ github.token }}` | Needs `checks: write` and `pull-requests: write` |
 
-Outputs: `requires-review` (`"true"`/`"false"`) and `report` (the JSON).
+`base` and `head` are passed to the binary verbatim and are not expanded by a
+shell, so use `${{ runner.temp }}/...` rather than `"$RUNNER_TEMP/..."`.
 
-Labelling and reviewer requests need the job to grant:
+`check-name` is the exact string you type into branch protection. Renaming it
+later un-requires the old name silently, and every open pull request goes
+green — pick one and leave it alone.
 
-```yaml
-permissions:
-  contents: read
-  pull-requests: write
-```
+### Outputs
 
-Neither is fatal: if the token cannot label or the reviewer is the PR author or
-is already requested, the action logs a warning and carries on.
+| Output | Values |
+| --- | --- |
+| `requires-review` | `true`, `false`, or **empty** when `lgtm` could not run |
+| `check-conclusion` | `success` or `failure`; empty when no check was published |
+| `report` | The full JSON report; empty when `lgtm` could not run |
 
-## Enforcing the result
-
-Exiting non-zero puts a red check on the pull request. **That alone does not
-prevent a merge** — a check blocks merging only once it is marked required in
-the repository's branch protection rules or rulesets, which is configured in
-repository settings, not here.
-
-Before requiring the check, note the polarity. `lgtm` exits 1 to mean *this
-change needs a human to look at it*, but a required check must go green to
-merge. Requiring it therefore means "only changes that need no review may
-merge": a PR that genuinely warrants review becomes unmergeable until it is
-split or shrunk, and no amount of human approval turns the check green. That is
-a legitimate way to enforce small PRs, but it is not a review workflow.
-
-To route flagged PRs to a reviewer instead, let the check pass and act on the
-result:
-
-The [drop-in workflow](#drop-in-workflow) above is already configured this way.
-To also request reviewers, extend its `with:` block:
-
-```yaml
-        with:
-          base: ${{ runner.temp }}/lgtm/base
-          head: ${{ github.workspace }}
-          fail-on-review-required: 'false'   # signal, not a wall
-          label: 'needs-review'
-          request-reviewers: 'alice,my-org/platform-team'
-```
-
-The merge gate is then one of:
-
-- **Requested reviewers** — enable "Require a pull request before merging" with
-  at least one approval. The action requests reviewers only on flagged PRs, so
-  unflagged ones still need the repository's baseline approvals.
-- **The label** — require a status check that fails while `needs-review` is
-  present and no approval exists, or use a ruleset that blocks merging on that
-  label.
-- **CODEOWNERS** — for path-based ownership, independent of `lgtm`.
-
-Because the label is removed when a PR stops being flagged, a PR that is split
-or shrunk clears itself on the next run.
-
-To gate on the decision in a later step of your own workflow, read the output:
+`requires-review` is empty rather than `false` on a tool failure, because
+claiming `false` would wave the change through. That means a naive
+`!= 'true'` test reads a crash as "no review needed" — within a pull request,
+gate on `check-conclusion` instead if you want fail-closed behaviour:
 
 ```yaml
 - uses: donaldwasserman/lgtm@main
@@ -292,27 +289,174 @@ To gate on the decision in a later step of your own workflow, read the output:
   with:
     base: ${{ runner.temp }}/lgtm/base
     head: ${{ github.workspace }}
-    fail-on-review-required: 'false'
-- if: steps.lgtm.outputs.requires-review == 'true'
+- if: steps.lgtm.outputs.check-conclusion == 'failure'
   env:
     REPORT: ${{ steps.lgtm.outputs.report }}
   run: echo "$REPORT"
 ```
 
+The job itself fails only when `lgtm` breaks. A change that requires review is
+reported by the check run, not by a red job, so the two signals stay distinct.
+
+### Trust modes
+
+The trusted-contributor exemption is resolved by the action before `lgtm` runs;
+the binary receives only the resulting boolean. Set `trust-mode` to exactly one
+of:
+
+| Mode | Trusted when | Needs |
+| --- | --- | --- |
+| `none` *(default)* | never | — |
+| `top-percent` | the author is in the top `trust-percent`% of contributors | contributors API |
+| `top-count` | the author is one of the top `trust-count` contributors | contributors API |
+| `codeowners` | the author owns **at least one** changed file | a CODEOWNERS file |
+
+`codeowners` is the mode to reach for first: it needs no extra token scope, no
+network ranking, and it is reproducible from the repository contents alone.
+
+**Ranking modes** rank by all-time commit count from
+`GET /repos/{owner}/{repo}/contributors`, which is keyed by GitHub login and so
+compares directly against the pull request author. Accounts of type `Bot` are
+excluded, so a busy `dependabot[bot]` neither inflates the denominator nor
+occupies a top slot.
+
+Two rules are worth knowing because they are easy to get wrong:
+
+- **The cutoff rounds up.** The top 20% of three contributors is one person,
+  not zero. A mode you deliberately enabled should not be silently inert on a
+  small repo.
+- **Ties at the cutoff are included.** With commit counts `10, 5, 5, 5, 1`, a
+  cutoff of two expands to four. Neither the contributors API nor
+  `git shortlog` specifies how ties are ordered, and a merge gate must not flip
+  on an unspecified sort.
+
+A consequence worth planning around: on a repo where one person writes most
+commits, any ranking mode exempts that person from nearly every pull request.
+That is why this repository's own workflow uses `none`. Note also that the
+contributors API caps at 500 entries and is served from a periodic cache, so
+`top-percent` computes against a wrong denominator on very large repos —
+prefer `top-count` or `codeowners` there.
+
+**CODEOWNERS mode** reads the first of `.github/CODEOWNERS`, `CODEOWNERS`, or
+`docs/CODEOWNERS` from the head tree, and matches it against the pull request's
+real file list from the API — not the `files[]` that `lgtm` reports, which
+contains only files it could parse, so ownership over `.md` or `.yml` paths
+would otherwise be invisible.
+
+Ownership is **last matching rule wins**, as CODEOWNERS specifies. Given
+
+```
+*        @alice
+*.go     @bob
+```
+
+the owner of `x.go` is `@bob` alone. Treating any matching rule as ownership
+would trust `@alice` for every Go file.
+
+The supported glob subset:
+
+| Form | Meaning |
+| --- | --- |
+| `*` | any characters within one path segment; never crosses `/` |
+| `?` | a single character within one segment |
+| `**` | zero or more whole segments |
+| leading `/`, or any embedded `/` | anchored at the repository root |
+| trailing `/` | a directory, and everything beneath it |
+| no `/` at all | matches a basename at any depth |
+
+So `docs/*` owns `docs/a.md` but not `docs/a/b.md`, while `docs/` owns both.
+Write a trailing slash when you mean a directory. Section headers
+(`[Section]`) are skipped, and `!`-negated patterns are skipped because
+CODEOWNERS does not support negation.
+
+`@org/team` owners are expanded to their members with `gh api`, which needs the
+`read:org` scope. The default `GITHUB_TOKEN` does not carry it for org teams —
+when expansion fails the action emits a warning and those members are **not**
+trusted. Every failure path here resolves the same way: no CODEOWNERS file, an
+unreachable API, or an unexpandable team all mean *not trusted*, so the gate
+can only ever become stricter, never looser.
+
+### Making it a required check
+
+Publishing the check does not block anything on its own. To gate merges, add a
+branch protection rule or ruleset on your default branch requiring the status
+check named `LGTM / review-gate` (or whatever you set `check-name` to).
+
+Do this **after** you have watched the check go green and red correctly on a
+real pull request. Marking it required before it has ever run successfully
+gates your default branch on a check that may be broken, on the same commit
+that broke it.
+
+### Routing: labels and reviewers
+
+`label` and `request-reviewers` are about getting the right eyes on a flagged
+pull request, not about blocking it:
+
+```yaml
+        with:
+          label: 'needs-review'
+          request-reviewers: 'alice,my-org/platform-team'
+```
+
+A plain login requests a user; `org/team` requests a team. Create the label in
+the repo first.
+
+The label tracks whether the change is *complex*, not whether it is currently
+*blocked* — an approved pull request keeps its `needs-review` label, so "which
+changes were complex?" stays an answerable question after the fact. It is
+removed only when a pull request shrinks back below the thresholds.
+
+### Troubleshooting
+
+**The check never appears.** The workflow needs `checks: write`. Without it the
+API call 403s and the action logs a warning rather than failing, so check the
+job log for `could not publish the ... check run`.
+
+**Nothing appears on pull requests from forks.** Fork pull requests get a
+read-only `GITHUB_TOKEN`, so no check can be published. Fork support is out of
+scope; if you need it, split the workflow in two and publish the check from a
+privileged `workflow_run` workflow that consumes an artifact from the
+unprivileged one. Do not reach for `pull_request_target` — it builds
+fork-authored code with a write-scoped token.
+
+**A complex pull request is green.** It has been approved. See
+[What the check means](#what-the-check-means).
+
+**The check shows in the UI but the merge gate ignores it.** Something is
+publishing against the merge commit rather than the head commit. The action
+refuses to guess here and errors out when no head SHA is available, so this
+should only happen with a hand-rolled variant.
+
+**Approving does not turn it green.** The workflow is missing the
+`pull_request_review` trigger, or its `actions/checkout` is missing
+`ref: ${{ github.event.pull_request.head.sha }}` and is analyzing the base
+branch.
+
+**Nobody is ever exempt.** `trust-mode` defaults to `none`. If it is set and
+still nothing is exempt, check the job log: the action warns when there is no
+CODEOWNERS file, when the contributors API is unreachable, and when an
+`@org/team` could not be expanded for lack of `read:org`. Each of those
+resolves to *not trusted* by design.
+
+**Everyone is exempt.** A ranking mode on a repo with few contributors trusts
+whoever writes most of the commits. Use `codeowners`, or `none`.
 ## Formal verification
 
 The decision rule lives in Alloy and the Go implementation is tested against
 solver-produced instances rather than hand-written expectations.
 
 ```bash
-make setup       # download alloy.jar (Alloy 6.2.0)
-make check       # check the seven assertions in alloy/properties.als
-make scenarios   # confirm every scenario in alloy/scenarios.als is satisfiable
-make generate    # solve scenarios -> XML -> regenerate eval/evaluator_alloy_test.go
-make test        # go test ./...
-make verify      # generate + build + test
-make all         # check + scenarios + generate + build
-make clean       # remove bin/ and Alloy output
+make setup            # download alloy.jar (Alloy 6.2.0)
+make check            # check the assertions in alloy/properties.als
+make scenarios        # confirm every scenario in alloy/scenarios.als is satisfiable
+make check-action     # check the assertions in alloy/check_properties.als
+make scenarios-action # confirm every scenario in alloy/check_scenarios.als is satisfiable
+make generate         # solve scenarios -> XML -> regenerate eval/evaluator_alloy_test.go
+make test             # go test ./...
+make test-action      # exercise the action's approval and trust logic against fixtures
+make verify           # generate + build + test
+make all              # check + scenarios + check-action + scenarios-action + generate + build
+make clean            # remove bin/ and Alloy output
 ```
 
 `make check` fails if any assertion yields a counterexample; `make scenarios`
@@ -333,8 +477,46 @@ Properties currently checked (`alloy/properties.als`):
 - `LowEverythingNeverRequires`
 - `MonotoneInDepthMod` — raising `depthMod` never flips review off
 - `TrustedContributorExemption` — a trusted submitter is exempt, provided the
-  tree parsed
+  tree parsed. Note this binds the exemption *bit*; how a caller decides who is
+  trusted (see [Trust modes](#trust-modes)) is deliberately outside the model,
+  which is what lets the policy change without reopening the proof
 - `UnparsedAlwaysRequiresReview` — an unparseable tree always requires review
+
+### The check-run layer
+
+`alloy/pr_review.als` answers "does this change need a human?".
+`alloy/check_run.als` answers the different question the pull request's status
+check actually asks: "what does the gate say?" — which also depends on whether
+a human has since shown up. It models the analyzer outcome, the per-reviewer
+reduction over review states, and the state/conclusion mapping in
+`WORKFLOW_LOGIC.md`, and its branch precedence mirrors the "Publish check run"
+step of `action.yml`.
+
+Properties checked (`alloy/check_properties.als`):
+
+- `AlwaysPublishesOnPullRequests` — a publishable evaluation always produces a
+  conclusion, so a required check is never silently absent
+- `AnalysisFailureFailsClosed` — a crashed analyzer is never green
+- `ApprovalDoesNotExcuseFailure` — nor is it green once approved
+- `GreenMeansSimpleOrApproved` — green means below the thresholds, or above
+  them and approved; nothing else
+- `ChangesRequestedOutranksApproval` — one block outranks any number of
+  approvals
+- `ApprovalClearsTheCheck` — approving is sufficient to turn it green, with no
+  re-analysis and no change to the diff
+- `CommentsDoNotChangeTheVerdict` — comment-only reviews are inert, so a
+  comment left after an approval cannot revoke it
+- `LatestVerdictWins` — a superseded verdict never counts
+- `UnparsedNeverGreenWithoutApproval` — bridges to `pr_review`: an unparseable
+  tree cannot go green on its own
+- `TrustedContributorStaysGreen` — bridges to `pr_review`: the top-20%
+  exemption survives the check layer
+
+`alloy/check_scenarios.als` holds one satisfiable scenario per row of
+`WORKFLOW_LOGIC.md` plus the review reductions the table leaves implicit.
+They double as non-vacuity witnesses: an assertion above that held only
+because its antecedent was unsatisfiable would surface here as an UNSAT
+scenario.
 
 ## Layout
 
@@ -347,4 +529,7 @@ internal/diff/   AST alignment and insert/delete/modify classification
 internal/metrics/ diff result -> eval.Metrics
 internal/model/  language-agnostic AST and change types
 alloy/           formal spec, properties, scenarios
+                 pr_review.als  + properties.als       + scenarios.als
+                 check_run.als  + check_properties.als + check_scenarios.als
+scripts/         action-level tests (approval reduction fixtures)
 ```

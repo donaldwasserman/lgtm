@@ -68,7 +68,7 @@ func TestAnalyzeRequiresReview(t *testing.T) {
 	}
 }
 
-func TestTopTwentyExemptsReview(t *testing.T) {
+func TestTrustExemptsReview(t *testing.T) {
 	base := writeTree(t, "base", map[string]string{"f.go": "package p\nfunc helper(){}\n"})
 	// broad change that would normally require review
 	headFiles := map[string]string{}
@@ -91,7 +91,7 @@ func TestTopTwentyExemptsReview(t *testing.T) {
 	}
 	_ = rep
 	if exempt {
-		t.Fatal("expected no review when topTwenty exemption set")
+		t.Fatal("expected no review when the trusted exemption is set")
 	}
 	_ = rep2
 }

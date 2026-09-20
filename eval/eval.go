@@ -7,15 +7,19 @@ package eval
 
 // Metrics summarizes the AST-graph complexity of a pull request's changes.
 type Metrics struct {
-	DepthMod int // impact/call depth of modified/deleted existing AST nodes
+	// The JSON tags pin the report's wire format, which consumers (including
+	// the check-run summary in action.yml) read by these exact names. They
+	// restate what the field names already produced, so renaming a field can
+	// no longer change the output by accident.
+	DepthMod int `json:"DepthMod"` // impact/call depth of modified/deleted existing AST nodes
 	// DepthNew is the nesting/call depth of newly added AST nodes. It is
 	// deliberately not consulted by RequiresReview: deep new code on its own
 	// does not force review (see NewCodeExemption in alloy/properties.als).
-	DepthNew   int
-	Breadth    int  // distinct files touched by the change
-	DepthTotal int  // overall semantic and dependency depth across all changes
-	TopTwenty  bool // submitter is in the top 20% of contributors (exemption)
-	Unparsed   bool // a file on either side could not be parsed
+	DepthNew   int  `json:"DepthNew"`
+	Breadth    int  `json:"Breadth"`    // distinct files touched by the change
+	DepthTotal int  `json:"DepthTotal"` // overall semantic and dependency depth across all changes
+	Trusted    bool `json:"Trusted"`    // submitter is exempt from review; how trust is decided is the caller's policy
+	Unparsed   bool `json:"Unparsed"`   // a file on either side could not be parsed
 }
 
 // Thresholds holds the repository baseline thresholds.
@@ -33,15 +37,19 @@ var DefaultThresholds = Thresholds{ThetaDepth: 7, ThetaBreadth: 6, EpsilonTrivia
 //
 // An unparseable tree overrides everything, the trusted-contributor exemption
 // included: with no reliable metrics the gate must not wave the change
-// through. Otherwise a trusted (top-20%) contributor is exempt:
+// through. Otherwise a trusted contributor is exempt.
 //
-//	RequiresReview = Unparsed || (!TopTwenty && (DepthMod >= ThetaDepth ||
+// Trusted is an opaque input: which contributors are trusted is a policy the
+// caller resolves, deliberately outside this decision and outside the formal
+// model.
+//
+//	RequiresReview = Unparsed || (!Trusted && (DepthMod >= ThetaDepth ||
 //	                 (Breadth >= ThetaBreadth && DepthTotal > EpsilonTrivial)))
 func RequiresReview(m Metrics, t Thresholds) bool {
 	if m.Unparsed {
 		return true
 	}
-	if m.TopTwenty {
+	if m.Trusted {
 		return false
 	}
 	highDepthExisting := m.DepthMod >= t.ThetaDepth

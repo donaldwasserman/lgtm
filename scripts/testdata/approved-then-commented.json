@@ -1,0 +1,2 @@
+[{"id": 1, "state": "APPROVED", "user": {"login": "alice"}},
+ {"id": 2, "state": "COMMENTED", "user": {"login": "alice"}}]

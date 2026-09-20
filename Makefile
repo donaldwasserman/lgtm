@@ -6,7 +6,7 @@ RUNTIME = $(ALLOY_DIR)/runtime
 OUTPUT = $(ALLOY_DIR)/output
 GO ?= go
 
-.PHONY: setup check scenarios all verify generate generate-instances build test clean
+.PHONY: setup check scenarios check-action scenarios-action all verify generate generate-instances build test test-action clean
 
 $(JAR):
 	@echo "Downloading Alloy $(ALLOY_VERSION)..."
@@ -41,6 +41,30 @@ scenarios: $(JAR)
 		|| { echo "FAIL: scenario unsat"; exit 1; }
 	@echo "All scenarios satisfiable"
 
+# Check the check-run layer (alloy/check_properties.als). Writes to a separate
+# output directory and never emits instance XML, so `make generate` - which
+# reads alloy/runtime - is unaffected.
+check-action: $(JAR)
+	@echo "=== Check-run property checks ==="
+	@mkdir -p $(OUTPUT)
+	@java -Djava.awt.headless=true -jar $(JAR) exec -f -o $(OUTPUT)/gate \
+		$(ALLOY_DIR)/check_properties.als 2>&1 \
+		| tee $(OUTPUT)/check_action.log
+	@# "UNSAT" is the passing result for a check; a bare "SAT" is a counterexample.
+	@! grep -qE '^[0-9]+\. check .* SAT$$' $(OUTPUT)/check_action.log \
+		|| { echo "FAIL: counterexample found"; exit 1; }
+	@echo "All check-run properties hold"
+
+scenarios-action: $(JAR)
+	@echo "=== Check-run scenario verification ==="
+	@mkdir -p $(OUTPUT)
+	@java -Djava.awt.headless=true -jar $(JAR) exec -f -o $(OUTPUT)/gate \
+		$(ALLOY_DIR)/check_scenarios.als 2>&1 \
+		| tee $(OUTPUT)/scenarios_action.log
+	@! grep -qE '^[0-9]+\. run .*UNSAT$$' $(OUTPUT)/scenarios_action.log \
+		|| { echo "FAIL: scenario unsat"; exit 1; }
+	@echo "All check-run scenarios satisfiable"
+
 # Solve the scenario `run` commands and dump instance XML files.
 # Runs from within alloy/ so `open pr_review` resolves against the local file.
 generate-instances: $(JAR)
@@ -67,7 +91,16 @@ build:
 test:
 	$(GO) test ./...
 
-all: check scenarios generate build
+# Exercise the GitHub Action's own logic - the approval reduction and the
+# trusted-contributor policy - against saved payloads. Every jq program is
+# extracted from action.yml, so these cannot drift from what the action runs.
+test-action:
+	@echo "=== Action approval logic ==="
+	./scripts/test-approval.sh
+	@echo "=== Action trust logic ==="
+	./scripts/test-trust.sh
+
+all: check scenarios check-action scenarios-action generate build
 	@echo "=== All checks complete ==="
 
 clean:
