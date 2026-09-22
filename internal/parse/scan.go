@@ -78,7 +78,7 @@ func skipDir(path string) bool {
 	base := filepath.Base(path)
 	switch base {
 	case ".git", "node_modules", "vendor", ".venv", "venv", "__pycache__",
-		"dist", "build", ".tox", ".idea", ".vscode":
+		"dist", "build", "target", ".tox", ".idea", ".vscode":
 		return true
 	}
 	return false
@@ -91,13 +91,19 @@ func (s *Spec) build(n *sitter.Node, src []byte, depth, index int) *model.Node {
 	start, end := n.StartByte(), n.EndByte()
 	name := ""
 	if field, ok := s.nameField[n.Type()]; ok {
-		if c := n.ChildByFieldName(field); c != nil && c.Type() == "identifier" {
+		if c := n.ChildByFieldName(field); c != nil && s.isNameType(c.Type()) {
 			name = c.Content(src)
 		}
 	}
 	callee := ""
 	if s.IsCall(n.Type()) {
 		if c := n.ChildByFieldName("function"); c != nil {
+			// Rust turbofish: parse::<i32>(s) names parse, not i32.
+			if c.Type() == "generic_function" {
+				if f := c.ChildByFieldName("function"); f != nil {
+					c = f
+				}
+			}
 			callee = calleeName(c, src)
 		}
 	}

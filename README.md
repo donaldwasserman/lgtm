@@ -128,7 +128,7 @@ lgtm --base /tmp/lgtm-base --head "$PWD"
 ## Supported languages
 
 Detected by extension; everything else is skipped, as are `.git`,
-`node_modules`, `vendor`, `.venv`, `venv`, and `__pycache__` directories.
+`node_modules`, `vendor`, `target`, `.venv`, `venv`, and `__pycache__` directories.
 
 | Language | Extensions |
 | --- | --- |
@@ -139,6 +139,7 @@ Detected by extension; everything else is skipped, as are `.git`,
 | TypeScript | `.ts` `.mts` `.cts` |
 | TSX | `.tsx` |
 | Java | `.java` |
+| Rust | `.rs` |
 
 ## GitHub Action
 

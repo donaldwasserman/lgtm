@@ -10,6 +10,7 @@ import (
 	"github.com/smacker/go-tree-sitter/javascript"
 	"github.com/smacker/go-tree-sitter/python"
 	"github.com/smacker/go-tree-sitter/ruby"
+	"github.com/smacker/go-tree-sitter/rust"
 	tsx "github.com/smacker/go-tree-sitter/typescript/tsx"
 	ts "github.com/smacker/go-tree-sitter/typescript/typescript"
 )
@@ -41,6 +42,9 @@ type Spec struct {
 	// callTypes are node types representing a call (callee identifier
 	// implies a call edge for intra-file call depth).
 	callTypes map[string]bool
+	// nameTypes are the node types accepted as a definition's name. Nil means
+	// plain "identifier" only.
+	nameTypes map[string]bool
 }
 
 var specs = []*Spec{
@@ -129,6 +133,29 @@ var specs = []*Spec{
 			"method_invocation": true,
 		},
 	},
+	{
+		ID:      "rust",
+		GetLang: rust.GetLanguage,
+		Exts:    map[string]bool{"rs": true},
+		// impl_item has no name field; its methods are function_items and
+		// are keyed on their own.
+		nameField: map[string]string{
+			"function_item":           "name",
+			"function_signature_item": "name",
+			"mod_item":                "name",
+			"macro_definition":        "name",
+			"struct_item":             "name",
+			"enum_item":               "name",
+			"union_item":              "name",
+			"trait_item":              "name",
+			"type_item":               "name",
+		},
+		callTypes: map[string]bool{
+			"call_expression": true,
+		},
+		// Rust type names (struct, enum, trait, ...) are type_identifier nodes.
+		nameTypes: map[string]bool{"identifier": true, "type_identifier": true},
+	},
 }
 
 // LanguageFor returns the spec for a file path by extension, or nil if the
@@ -158,6 +185,14 @@ func ext(path string) string {
 		return ""
 	}
 	return path[dot+1:]
+}
+
+// isNameType reports whether a node type can hold a definition's name.
+func (s *Spec) isNameType(typ string) bool {
+	if s.nameTypes == nil {
+		return typ == "identifier"
+	}
+	return s.nameTypes[typ]
 }
 
 // IsCall reports whether a node type represents a call expression.
