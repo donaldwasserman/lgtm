@@ -4,12 +4,14 @@ inputs:
   base:
     description: >-
       Path to the base (pre-PR) source tree. Must be an already-resolved path:
-      use ${{ runner.temp }}/... rather than "$RUNNER_TEMP/...", as the value is
-      passed to the tool verbatim and is not expanded by a shell.
+      use the runner.temp expression rather than "$RUNNER_TEMP/...", as the
+      value is passed to the tool verbatim and is not expanded by a shell.
+      (Descriptions must not contain expression syntax: the runner evaluates
+      it here too, and rejects the whole action if it does.)
     required: true
   head:
     description: >-
-      Path to the head (post-PR) source tree, normally ${{ github.workspace }}.
+      Path to the head (post-PR) source tree, normally the github.workspace path.
       Must be an already-resolved path; see "base".
     required: true
   theta-depth:
