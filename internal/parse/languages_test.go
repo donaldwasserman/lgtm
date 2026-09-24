@@ -15,6 +15,7 @@ var sampleByExt = map[string]string{
 	"py":   "def f():\n    pass\n",
 	"rb":   "def f\nend\n",
 	"java": "class A { void f() {} }\n",
+	"rs":   "fn f() -> i32 { 1 }\n",
 	"js":   "function f() { return 1; }\n",
 	"mjs":  "export function f() { return 1; }\n",
 	"cjs":  "module.exports = function f() { return 1; };\n",

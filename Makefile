@@ -99,6 +99,8 @@ test-action:
 	./scripts/test-approval.sh
 	@echo "=== Action trust logic ==="
 	./scripts/test-trust.sh
+	@echo "=== Action manifest ==="
+	./scripts/test-manifest.sh
 
 all: check scenarios check-action scenarios-action generate build
 	@echo "=== All checks complete ==="
