@@ -35,17 +35,22 @@ numbers without the `v`: `1.4.2`, `1.4`, `1`, `latest`.
    git checkout main && git pull
    git tag v1.4.3 && git push origin v1.4.3
    ```
-4. Wait for the **release** workflow. It checks the tag matches `VERSION`,
-   runs the tests, builds binaries, and creates a **draft** release.
+4. Wait for two workflows to go green:
+   - **release** checks the tag matches `VERSION`, runs the tests, builds
+     binaries, and creates a **draft** release.
+   - **publish** builds the Docker image and pushes it as `1.4.3`.
 5. On GitHub, open the draft release. Check the notes, tick **"Publish this
    Action to the GitHub Marketplace"**, and click **Publish**.
-6. Publishing starts the **publish** workflow, which pushes the Docker image
-   and moves the `v1` tag. Once it's green, the release is live.
+6. Publishing starts the **promote** workflow, which points the `1.4`, `1`
+   and `latest` image tags and the `v1` git tag at this release. Once it's
+   green, the release is live.
 7. Try it: `uses: donaldwasserman/lgtm@v1.4.3` in a test repository, and
    `docker run --rm ghcr.io/donaldwasserman/lgtm:1.4.3 --version`.
 
 Why the manual step: GitHub only lets a person publish to the Marketplace, so
-the workflow stops at a draft. Nothing is public until you click Publish.
+the workflow stops at a draft. Until you click Publish, only the exact
+`1.4.3` image and `v1.4.3` tag exist; nobody on `@v1` or `:latest` gets the
+new version.
 
 **If a release is broken:** don't delete or move its tag. Release a fix as the
 next patch version; `v1` follows automatically.
@@ -58,14 +63,15 @@ made, then tag again. This is safe only while the release is still a draft.
 
 | Workflow | Runs when | Does |
 | --- | --- | --- |
-| `ci.yml` | every push to `main` and pull request | tests, model checks, Docker build (not pushed), runs the action on itself |
+| `ci.yml` | every push to `main` and pull request | tests, model checks, image smoke test |
+| `publish.yml` | push to `main` | pushes image tags `main` and `sha-<commit>` |
+| `publish.yml` | a `v1.2.3` tag is pushed | pushes image tag `1.2.3` |
 | `release.yml` | a `v1.2.3` tag is pushed | checks, builds Linux and macOS binaries (amd64 + arm64), creates a draft release with checksums |
-| `publish.yml` | a release is published | pushes the Docker image, moves the `v1` tag |
-| `review.yml` | pull requests | runs the action on this repository's own pull requests |
+| `promote.yml` | a release is published | points image tags `1.2`, `1`, `latest` and git tag `v1` at the release |
 
-The action itself (`action.yml`) downloads the release binary that matches its
-own version from the Releases page and checks it against `checksums.txt`.
-Used from a branch or commit instead of a release tag, it builds from source.
+The action picks its image from the version it was used at: `@v1` or
+`@v1.2.3` pulls that release's image (the number is read from `VERSION`), a
+commit SHA pulls `sha-<commit>`, and anything else pulls `main`.
 
 ## One-time Marketplace setup
 
@@ -76,7 +82,8 @@ Done once, before the first release:
       GitHub prompts for this the first time you tick the Marketplace box.
 - [ ] On the first release, pick the Marketplace categories (suggested:
       *Code review*, *Continuous integration*).
-- [ ] After the first Docker push, open the package settings on GitHub and set
-      the `lgtm` package's visibility to **public**. New packages start private.
+- [ ] Open the `lgtm` package settings on GitHub and set its visibility to
+      **public**. New packages start private, and other repositories can't
+      pull a private image — the action would fail for everyone.
 - [ ] If tag protection rules are on, allow GitHub Actions to update `v*`
       tags, or `publish.yml` can't move `v1`.

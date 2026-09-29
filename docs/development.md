@@ -2,7 +2,8 @@
 
 ## Requirements
 
-- Go 1.25+ and a C compiler (the Tree-sitter code parser is C, so builds need `CGO_ENABLED=1`)
+- Go 1.25+ and a C compiler (the Tree-sitter code parser is C, so builds need `CGO_ENABLED=1`),
+  and `git` for the git-mode tests — or just Docker, using the `docker-*` targets
 - Java 11+ and `curl` — only for the formal-model checks
 
 ## Common commands
@@ -11,13 +12,24 @@
 make build        # build bin/lgtm
 make test         # Go tests
 make test-action  # tests for the logic inside action.yml (needs ruby and jq)
-make docker       # build the Docker image as lgtm:dev
+make docker-build # build the image as lgtm:local
+make docker-test  # run the Go tests inside the image's build stage, as CI does
+make docker-run BASE_REF=origin/main  # run the local image on this checkout
 make all          # everything below, then build
 make clean        # remove build and model output
 ```
 
-`ci.yml` runs all of these on every pull request. Releases are covered in
-[releasing.md](releasing.md).
+## Workflows
+
+| Workflow | Runs when | Does |
+| --- | --- | --- |
+| `ci.yml` | every push to `main` and pull request | Go tests (in the image), action tests, model checks, image smoke test |
+| `review.yml` | pull requests | runs the action, from this branch, on this repo's own pull requests |
+| `publish.yml` | push to `main`, or a version tag | pushes the image to `ghcr.io` |
+| `release.yml` | a version tag | builds binaries into a draft release |
+| `promote.yml` | a release is published | moves the `1`, `1.2`, `latest` image tags and the `v1` git tag |
+
+Releases are covered in [releasing.md](releasing.md).
 
 ## The formal model
 
@@ -78,7 +90,7 @@ Check results (`check_properties.als`):
 ## Code layout
 
 ```
-cmd/lgtm/          command-line entry point
+cmd/lgtm/          command-line entry point, including git mode
 cmd/genalloy/      turns Alloy examples into eval/evaluator_alloy_test.go
 eval/              the review rule (mirrors alloy/pr_review.als)
 internal/parse/    reads source files with Tree-sitter; one entry per language
@@ -86,5 +98,6 @@ internal/diff/     lines up before/after code and classifies each change
 internal/metrics/  turns the comparison into the numbers the rule uses
 internal/model/    shared types
 alloy/             formal models
-scripts/           tests for action.yml
+scripts/           tests for action.yml, and release helpers
+Dockerfile         build, test and runtime stages of the image
 ```

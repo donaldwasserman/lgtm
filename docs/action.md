@@ -4,15 +4,16 @@ For a copy-paste workflow, see the [Quick start](../README.md#quick-start-github
 
 What the action does on each run:
 
-1. Downloads the `lgtm` binary for this release (or builds it, if you use an unreleased version).
+1. Pulls the `lgtm` Docker image that matches this version of the action.
 2. Works out whether the author is trusted (only if `trust-mode` is set).
-3. Runs `lgtm` on the before/after code.
+3. Runs `lgtm` in that image on the before/after code — offline, with the code
+   mounted read-only.
 4. If review is needed, checks whether someone has approved.
 5. Posts the result as a check on the pull request.
 6. Optionally adds a label and requests reviewers.
 
-Runs on Linux or macOS runners with `curl`, `gh`, and `jq` — GitHub-hosted
-runners have all three.
+Needs a Linux runner with Docker, `gh`, and `jq`. GitHub-hosted
+`ubuntu-latest` has all three.
 
 ## Versions
 
@@ -20,7 +21,12 @@ runners have all three.
 | --- | --- |
 | `donaldwasserman/lgtm@v1` | The newest `1.x.x`. Fixes arrive automatically; nothing breaks. *Recommended.* |
 | `donaldwasserman/lgtm@v1.2.3` | Exactly that version, forever. |
-| `donaldwasserman/lgtm@main` or a commit SHA | Unreleased code. Built from source on each run, so add `actions/setup-go` first. |
+| `donaldwasserman/lgtm@<commit SHA>` | Exactly that commit (must be on `main`). |
+| `donaldwasserman/lgtm@main` | Unreleased code. May change or break at any time. |
+
+The action pulls the matching image — `ghcr.io/donaldwasserman/lgtm:1.2.3`,
+`:sha-<commit>`, or `:main` — so the analysis code always matches the action
+you picked. Set `image` to override.
 
 See [CHANGELOG.md](../CHANGELOG.md) for what changed.
 
@@ -35,14 +41,20 @@ Both are needed:
 
 On `pull_request_review`, GitHub checks out the target branch by default. Set
 `ref: ${{ github.event.pull_request.head.sha }}` on `actions/checkout` or the
-action will analyze the wrong code.
+action will analyze the wrong code. Also set `fetch-depth: 0` and fetch the
+target branch, as in the Quick start — `lgtm` needs the history to find where
+the branch split off.
 
 ## Inputs
 
 | Input | Default | Meaning |
 | --- | --- | --- |
-| `base` | *(required)* | Folder with the code before the change |
-| `head` | *(required)* | Folder with the code after the change |
+| `base-ref` | *(empty)* | Branch the pull request targets, e.g. `origin/main` |
+| `head-ref` | `HEAD` | The change itself |
+| `repo` | the workspace | Path to the git checkout |
+| `base` | *(empty)* | Instead of `base-ref`: folder with the code before the change |
+| `head` | *(empty)* | Instead of `base-ref`: folder with the code after the change |
+| `image` | matches the action version | `lgtm` image to run. Used as-is if already on the runner, so a workflow can build its own |
 | `theta-depth` | `7` | Edit depth that forces review |
 | `theta-breadth` | `6` | Number of files that forces review |
 | `epsilon-trivial` | `1` | Total depth at or below which a change is too small to matter |
@@ -55,8 +67,9 @@ action will analyze the wrong code.
 | `request-reviewers` | *(empty)* | Comma-separated users or `org/team`s to request on flagged pull requests |
 | `github-token` | `${{ github.token }}` | Needs `checks: write` and `pull-requests: write` |
 
-Write `base` and `head` as `${{ runner.temp }}/...`, not `$RUNNER_TEMP/...` —
-the value is used as-is, without shell expansion.
+Set either `base-ref`, or both `base` and `head`. Anything else is reported as
+a failed analysis. Write paths as `${{ runner.temp }}/...`, not
+`$RUNNER_TEMP/...` — the value is used as-is, without shell expansion.
 
 **Pick `check-name` once and leave it.** It is the exact name you mark as
 required in branch protection. Renaming it quietly stops the old requirement,
@@ -78,8 +91,7 @@ is treated as "needs review":
 - uses: donaldwasserman/lgtm@v1
   id: lgtm
   with:
-    base: ${{ runner.temp }}/lgtm/base
-    head: ${{ github.workspace }}
+    base-ref: origin/${{ github.event.pull_request.base.ref }}
 - if: steps.lgtm.outputs.check-conclusion == 'failure'
   env:
     REPORT: ${{ steps.lgtm.outputs.report }}
@@ -203,5 +215,7 @@ removed only if the pull request shrinks back under the limits.
 | No check on pull requests from forks | Forks get a read-only token. Not supported. Don't switch to `pull_request_target` — it runs untrusted code with write access. |
 | A big pull request is green | Someone approved it. The check title says so. |
 | Approving doesn't turn it green | Missing the `pull_request_review` trigger, or `actions/checkout` is missing `ref: ${{ github.event.pull_request.head.sha }}`. |
+| "Analysis failed" with "cannot resolve" or "no merge base" | The checkout is shallow or the target branch wasn't fetched. Use `fetch-depth: 0` and fetch the branch, as in the Quick start. |
+| "Analysis failed" pulling the image | The runner couldn't download the image. Check the job log for the registry error. |
 | Nobody is ever trusted | `trust-mode` defaults to `none`. If set, check the log for warnings (no CODEOWNERS, API errors, missing `read:org`). |
 | Everyone is trusted | A ranking mode on a repo with few contributors. Use `codeowners` or `none`. |

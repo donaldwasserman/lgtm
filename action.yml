@@ -181,7 +181,9 @@ runs:
         GH_TOKEN: ${{ inputs.github-token }}
         REPO: ${{ github.repository }}
         PR: ${{ github.event.pull_request.number }}
-        HEAD_DIR: ${{ inputs.head }}
+        # Directory mode names the head tree; in git mode the checkout is the
+        # head tree (actions/checkout at the head SHA), as for LGTM_REPO below.
+        HEAD_DIR: ${{ inputs.head || inputs.repo || github.workspace }}
         MODE: ${{ inputs.trust-mode }}
         AUTHOR: ${{ inputs.author }}
         TRUST_PERCENT: ${{ inputs.trust-percent }}
