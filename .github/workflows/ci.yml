@@ -1,0 +1,65 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  # The Go suite runs inside the image's own builder, so what is tested is
+  # exactly what gets published.
+  go-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # These scripts test the GitHub-side logic in action.yml, which runs on the
+  # runner rather than in the image. The runner already has jq and ruby.
+  action-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: make test-action
+
+  # Runs the published entrypoint the way another CI would: a read-only
+  # checkout mounted at /repo, no network, a ref to diff against.
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: lgtm:ci
+          cache-from: type=gha
+      - name: Evaluate the last commit
+        run: |
+          set -uo pipefail
+          docker run --rm --network none --user "$(id -u):$(id -g)" \
+            -v "$PWD:/repo:ro" -v "$RUNNER_TEMP:/out" \
+            lgtm:ci --repo /repo --base-ref HEAD~1 --output /out/report.json --exit-zero
+          jq -e '.schemaVersion == 1 and (.verdict == "review-required" or .verdict == "no-review")' \
+            "$RUNNER_TEMP/report.json"
+      - name: A missing base ref fails closed
+        run: |
+          code=0
+          docker run --rm --network none -v "$PWD:/repo:ro" lgtm:ci \
+            --repo /repo --base-ref origin/does-not-exist || code=$?
+          if [ "$code" -lt 2 ]; then
+            echo "::error::expected a tool failure (exit >= 2), got $code"
+            exit 1
+          fi

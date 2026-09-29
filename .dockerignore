@@ -1,0 +1,7 @@
+.git
+.idea
+.claude
+bin
+alloy/alloy.jar
+alloy/output
+alloy/runtime

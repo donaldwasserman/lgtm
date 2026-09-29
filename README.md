@@ -24,36 +24,58 @@ change through.
 
 ## Requirements
 
-- Go 1.25+ (required for building and running `lgtm`)
+- Docker, to run the published image; or Go 1.25+ and a C compiler to build
+  natively (Tree-sitter is cgo)
+- `git`, for git mode (bundled in the image)
 - Java 11+ and `curl` — only for the Alloy formal-verification targets
 
 ## Install
 
+The image is published for `linux/amd64` and `linux/arm64`:
+
 ```bash
-go build -o bin/lgtm ./cmd/lgtm
-# or
-make build
+docker pull ghcr.io/donaldwasserman/lgtm:main
+```
+
+Or build it, or the binary, from source:
+
+```bash
+make docker-build   # image tagged lgtm:local
+make build          # native binary at bin/lgtm
 ```
 
 ## Usage
 
-`lgtm` compares two directories, not two git refs. Materialize the base tree
-yourself (`git archive`, a second worktree, etc.) and point the tool at both.
+`lgtm` compares two source trees. It takes them either as two directories, or
+as a git checkout plus the ref the change targets, in which case it diffs the
+head commit against its merge base with that ref:
 
 ```bash
 lgtm --base <dir> --head <dir> [flags]
+lgtm --repo <dir> --base-ref <ref> [--head-ref <ref>] [flags]
 ```
+
+`lgtm` only evaluates code. It never touches the network, and it knows
+nothing about GitHub: who is trusted, whether the change has been approved and
+where the verdict is published are the caller's business. The
+[GitHub Action](#github-action) is one such caller; any other CI can be
+another, using the [report](#report) and [exit codes](#exit-codes).
 
 ### Flags
 
 | Flag | Default | Description |
 | --- | --- | --- |
-| `--base` | *(required)* | Path to the base (pre-PR) source tree |
-| `--head` | *(required)* | Path to the head (post-PR) source tree |
+| `--base` | | Path to the base (pre-PR) source tree. Directory mode |
+| `--head` | | Path to the head (post-PR) source tree. Directory mode |
+| `--repo` | | Path to a git checkout. Git mode, with `--base-ref` |
+| `--base-ref` | | Ref the change targets; the base tree is its merge base with `--head-ref` |
+| `--head-ref` | `HEAD` | Ref of the change itself |
 | `--theta-depth` | `7` | High depth threshold (θ_depth) |
 | `--theta-breadth` | `6` | High breadth threshold (θ_breadth) |
 | `--epsilon-trivial` | `1` | Depth at or below which a change is trivial (ε_trivial) |
 | `--trusted` | `false` | Submitter is a trusted contributor (exempts review). The caller decides who is trusted |
+| `--output` | | Also write the JSON report to this file |
+| `--exit-zero` | `false` | Exit `0` for both verdicts; failures still exit non-zero |
 | `--help` | | Show usage |
 
 ### Exit codes
@@ -65,13 +87,34 @@ lgtm --base <dir> --head <dir> [flags]
 | `2` | Usage error or failure while scanning/diffing |
 
 The decision is on the exit code, so `lgtm` gates a CI job directly. The JSON
-report always goes to stdout regardless of the decision.
+report always goes to stdout regardless of the decision. With `--exit-zero`,
+both verdicts exit `0` and only a failure is non-zero — for a pipeline that
+should record the verdict rather than stop on it. Read `verdict` from the
+report in that case.
+
+Git mode never fetches. A ref that does not resolve, or a shallow clone with no
+merge base, exits `2` rather than diffing against a guess: fetch full history
+and the base branch first.
+
+### Report
+
+| Field | Description |
+| --- | --- |
+| `schemaVersion` | `1`. Bumped when a field is renamed, removed or changes meaning; additions do not bump it |
+| `verdict` | `"review-required"` or `"no-review"` |
+| `requiresReview` | The same verdict as a boolean |
+| `metrics` | `DepthMod`, `DepthNew`, `Breadth`, `DepthTotal`, `Trusted`, `Unparsed` |
+| `thresholds` | The thresholds the verdict was computed with |
+| `parseErrors` | Files that could not be parsed, with `path`, `side` and `reason`. Omitted when empty |
+| `files` | Changed paths with their `kind` |
 
 ### Example
 
 ```console
 $ lgtm --base /tmp/base --head /tmp/head
 {
+  "schemaVersion": 1,
+  "verdict": "no-review",
   "requiresReview": false,
   "metrics": {
     "DepthMod": 6,
@@ -105,6 +148,8 @@ A file that fails to parse is reported and forces review:
 ```console
 $ lgtm --base /tmp/base --head /tmp/broken
 {
+  "schemaVersion": 1,
+  "verdict": "review-required",
   "requiresReview": true,
   "metrics": { "...": "...", "Unparsed": true },
   "parseErrors": [
@@ -116,14 +161,40 @@ $ echo $?
 1
 ```
 
-Comparing against a merge base:
+Comparing the current branch against `main`:
 
 ```bash
-BASE=$(git merge-base origin/main HEAD)
-mkdir -p /tmp/lgtm-base
-git archive "$BASE" | tar -x -C /tmp/lgtm-base
-lgtm --base /tmp/lgtm-base --head "$PWD"
+lgtm --repo . --base-ref origin/main
 ```
+
+### Docker
+
+The image's entrypoint is `lgtm`, and it works on whatever is mounted at
+`/repo`. Mount the checkout read-only; the container needs no network:
+
+```bash
+docker run --rm --network none -v "$PWD:/repo:ro" \
+  ghcr.io/donaldwasserman/lgtm:main --repo /repo --base-ref origin/main
+```
+
+`make docker-run BASE_REF=origin/main` does the same with a locally built
+image.
+
+In another CI system, check out with full history, fetch the target branch,
+and act on the exit code — or collect the report and decide later:
+
+```bash
+git fetch --no-tags origin main
+docker run --rm --network none --user "$(id -u):$(id -g)" \
+  -v "$PWD:/repo:ro" -v "$PWD/out:/out" \
+  ghcr.io/donaldwasserman/lgtm:main \
+  --repo /repo --base-ref origin/main --output /out/lgtm.json --exit-zero
+jq -r .verdict out/lgtm.json
+```
+
+`--user` lets the container write the report into a directory owned by the CI
+user. The trusted-contributor exemption is the caller's to decide; pass
+`--trusted` when it applies.
 
 ## Supported languages
 
@@ -182,28 +253,15 @@ jobs:
           # without this you would analyze the wrong tree.
           ref: ${{ github.event.pull_request.head.sha }}
 
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.25'
-
-      - name: Determine merge base
-        id: base
+      - name: Fetch base branch
         env:
           # GITHUB_BASE_REF is not set on pull_request_review.
           BASE_REF: ${{ github.event.pull_request.base.ref }}
-        run: |
-          git fetch --no-tags origin "$BASE_REF"
-          echo "ref=$(git merge-base "origin/$BASE_REF" HEAD)" >> "$GITHUB_OUTPUT"
-
-      - name: Extract base tree
-        run: |
-          mkdir -p "$RUNNER_TEMP/lgtm/base"
-          git archive "${{ steps.base.outputs.ref }}" | tar -x -C "$RUNNER_TEMP/lgtm/base"
+        run: git fetch --no-tags origin "$BASE_REF"
 
       - uses: donaldwasserman/lgtm@main
         with:
-          base: ${{ runner.temp }}/lgtm/base
-          head: ${{ github.workspace }}
+          base-ref: origin/${{ github.event.pull_request.base.ref }}
           theta-depth: '7'
           theta-breadth: '6'
           epsilon-trivial: '1'
@@ -250,8 +308,12 @@ wave pull requests through.
 
 | Input | Default | Description |
 | --- | --- | --- |
-| `base` | *(required)* | Resolved path to the base tree |
-| `head` | *(required)* | Resolved path to the head tree |
+| `base-ref` | *(empty)* | Ref the PR targets, e.g. `origin/main`. Git mode |
+| `head-ref` | `HEAD` | Ref of the change, for git mode |
+| `repo` | `github.workspace` | Resolved path to the checkout, for git mode |
+| `base` | *(empty)* | Resolved path to the base tree. Directory mode |
+| `head` | *(empty)* | Resolved path to the head tree. Directory mode |
+| `image` | `ghcr.io/donaldwasserman/lgtm:main` | The `lgtm` image. Used as-is if already present locally |
 | `theta-depth` | `7` | High depth threshold |
 | `theta-breadth` | `6` | High breadth threshold |
 | `epsilon-trivial` | `1` | Trivial-depth upper bound |
@@ -264,8 +326,14 @@ wave pull requests through.
 | `request-reviewers` | *(empty)* | Comma-separated reviewers to request on flagged pull requests |
 | `github-token` | `${{ github.token }}` | Needs `checks: write` and `pull-requests: write` |
 
-`base` and `head` are passed to the binary verbatim and are not expanded by a
-shell, so use `${{ runner.temp }}/...` rather than `"$RUNNER_TEMP/..."`.
+Set either `base-ref` or both `base` and `head`; anything else is reported
+as a failed analysis. Paths are passed verbatim and not expanded by a shell,
+so use `${{ runner.temp }}/...` rather than `"$RUNNER_TEMP/..."`.
+
+The action splits in two. The evaluation runs in the `lgtm` container, offline
+and with the trees mounted read-only. Everything that talks to GitHub —
+resolving trust, reading approvals, publishing the check, labelling — runs on
+the runner around it, so the action needs a Linux runner with Docker.
 
 `check-name` is the exact string you type into branch protection. Renaming it
 later un-requires the old name silently, and every open pull request goes
@@ -288,8 +356,7 @@ gate on `check-conclusion` instead if you want fail-closed behaviour:
 - uses: donaldwasserman/lgtm@main
   id: lgtm
   with:
-    base: ${{ runner.temp }}/lgtm/base
-    head: ${{ github.workspace }}
+    base-ref: origin/${{ github.event.pull_request.base.ref }}
 - if: steps.lgtm.outputs.check-conclusion == 'failure'
   env:
     REPORT: ${{ steps.lgtm.outputs.report }}
@@ -439,6 +506,14 @@ CODEOWNERS file, when the contributors API is unreachable, and when an
 `@org/team` could not be expanded for lack of `read:org`. Each of those
 resolves to *not trusted* by design.
 
+**Analysis failed with "cannot resolve" or "no merge base".** The checkout is
+shallow or the base branch was never fetched. Use `fetch-depth: 0` and fetch
+the base branch before the action, as in the drop-in workflow.
+
+**Analysis failed pulling the image.** The runner could not pull `image`. The
+published package must be public for workflows in other repositories to pull
+it anonymously.
+
 **Everyone is exempt.** A ranking mode on a repo with few contributors trusts
 whoever writes most of the commits. Use `codeowners`, or `none`.
 ## Formal verification
@@ -522,7 +597,7 @@ scenario.
 ## Layout
 
 ```
-cmd/lgtm/        CLI entrypoint
+cmd/lgtm/        CLI entrypoint, including git mode
 cmd/genalloy/    generates eval/evaluator_alloy_test.go from Alloy instances
 eval/            RequiresReview decision logic (mirrors alloy/pr_review.als)
 internal/parse/  Tree-sitter scanning and per-language specs
@@ -533,4 +608,12 @@ alloy/           formal spec, properties, scenarios
                  pr_review.als  + properties.als       + scenarios.als
                  check_run.als  + check_properties.als + check_scenarios.als
 scripts/         action-level tests (approval reduction fixtures)
+Dockerfile       builder, test and runtime stages of the lgtm image
+.github/workflows/
+                 review.yml   runs the gate on this repo's PRs
+                 ci.yml       Go tests, action tests, image smoke test
+                 publish.yml  multi-arch image to GHCR on push to main
 ```
+
+Publishing needs one manual step: after the first run of `publish.yml`, set
+the `lgtm` package on GHCR to public, or consumers cannot pull it.
