@@ -10,10 +10,14 @@
 ```bash
 make build        # build bin/lgtm
 make test         # Go tests
-make test-action  # tests for the logic inside action.yml
+make test-action  # tests for the logic inside action.yml (needs ruby and jq)
+make docker       # build the Docker image as lgtm:dev
 make all          # everything below, then build
 make clean        # remove build and model output
 ```
+
+`ci.yml` runs all of these on every pull request. Releases are covered in
+[releasing.md](releasing.md).
 
 ## The formal model
 

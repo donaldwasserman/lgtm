@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"lgtm/internal/model"
-	"lgtm/internal/parse"
+	"github.com/donaldwasserman/lgtm/internal/model"
+	"github.com/donaldwasserman/lgtm/internal/parse"
 )
 
 // small model helpers (bypass the parser for pure diff tests)

@@ -151,3 +151,19 @@ func TestGitMode(t *testing.T) {
 		t.Fatalf("error should name the missing ref, got: %s", stderr.String())
 	}
 }
+
+// TestVersion checks --version prints the build-time version and nothing
+// else, and needs no trees: release tooling runs it as a smoke test.
+func TestVersion(t *testing.T) {
+	old := version
+	version = "1.2.3"
+	defer func() { version = old }()
+
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"--version"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit %d, stderr %q", code, stderr.String())
+	}
+	if got := stdout.String(); got != "1.2.3\n" {
+		t.Fatalf("stdout %q, want %q", got, "1.2.3\n")
+	}
+}

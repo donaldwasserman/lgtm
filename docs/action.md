@@ -4,15 +4,25 @@ For a copy-paste workflow, see the [Quick start](../README.md#quick-start-github
 
 What the action does on each run:
 
-1. Builds `lgtm`.
+1. Downloads the `lgtm` binary for this release (or builds it, if you use an unreleased version).
 2. Works out whether the author is trusted (only if `trust-mode` is set).
 3. Runs `lgtm` on the before/after code.
 4. If review is needed, checks whether someone has approved.
 5. Posts the result as a check on the pull request.
 6. Optionally adds a label and requests reviewers.
 
-Needs a Linux runner with Go 1.25+, `gh`, and `jq`. GitHub-hosted
-`ubuntu-latest` has `gh` and `jq`; add `actions/setup-go` for Go.
+Runs on Linux or macOS runners with `curl`, `gh`, and `jq` — GitHub-hosted
+runners have all three.
+
+## Versions
+
+| You write | You get |
+| --- | --- |
+| `donaldwasserman/lgtm@v1` | The newest `1.x.x`. Fixes arrive automatically; nothing breaks. *Recommended.* |
+| `donaldwasserman/lgtm@v1.2.3` | Exactly that version, forever. |
+| `donaldwasserman/lgtm@main` or a commit SHA | Unreleased code. Built from source on each run, so add `actions/setup-go` first. |
+
+See [CHANGELOG.md](../CHANGELOG.md) for what changed.
 
 ## Triggers
 
@@ -65,7 +75,7 @@ test for `== 'true'`, or use `check-conclusion == 'failure'` so that a failure
 is treated as "needs review":
 
 ```yaml
-- uses: donaldwasserman/lgtm@main
+- uses: donaldwasserman/lgtm@v1
   id: lgtm
   with:
     base: ${{ runner.temp }}/lgtm/base

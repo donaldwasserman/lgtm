@@ -1,0 +1,98 @@
+# Pushing a version tag (v1.2.3) builds everything and creates a DRAFT release.
+# Nothing is public until a person publishes the draft on GitHub, which is
+# also where the Marketplace listing is updated; publish.yml does the rest.
+name: release
+
+on:
+  push:
+    tags: ['v[0-9]+.[0-9]+.[0-9]+']
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tag matches VERSION
+        run: |
+          want="v$(tr -d '[:space:]' < VERSION)"
+          if [ "$GITHUB_REF_NAME" != "$want" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match VERSION ($want). Update VERSION, then re-tag."
+            exit 1
+          fi
+      - name: CHANGELOG has an entry
+        run: |
+          if [ -z "$(scripts/changelog-section.sh "${GITHUB_REF_NAME#v}")" ]; then
+            echo "::error::CHANGELOG.md has no '## ${GITHUB_REF_NAME#v}' section"
+            exit 1
+          fi
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: make test
+      - run: make test-action
+
+  # The parser is C code, so each platform builds on its own runner.
+  binaries:
+    needs: verify
+    strategy:
+      matrix:
+        include:
+          - { os: linux,  arch: amd64, runner: ubuntu-latest }
+          - { os: linux,  arch: arm64, runner: ubuntu-24.04-arm }
+          - { os: darwin, arch: arm64, runner: macos-latest }
+          - { os: darwin, arch: amd64, runner: macos-15-intel }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build
+        env:
+          CGO_ENABLED: '1'
+          OS: ${{ matrix.os }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          ldflags="-s -w -X main.version=$version"
+          # Linux binaries are fully static so they run on any distribution.
+          if [ "$OS" = linux ]; then ldflags="$ldflags -linkmode external -extldflags -static"; fi
+          mkdir -p dist/pkg
+          go build -trimpath -ldflags "$ldflags" -o dist/pkg/lgtm ./cmd/lgtm
+          test "$(dist/pkg/lgtm --version)" = "$version"
+          cp LICENSE README.md dist/pkg/
+          # action.yml extracts the member named "lgtm", so keep paths flat.
+          tar -czf "dist/lgtm_${version}_${OS}_${ARCH}.tar.gz" -C dist/pkg lgtm LICENSE README.md
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lgtm-${{ matrix.os }}-${{ matrix.arch }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  draft:
+    needs: binaries
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum *.tar.gz > checksums.txt && cat checksums.txt
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          scripts/changelog-section.sh "${GITHUB_REF_NAME#v}" > notes.md
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --draft --verify-tag \
+            --title "$GITHUB_REF_NAME" \
+            --notes-file notes.md

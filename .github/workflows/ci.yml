@@ -31,6 +31,17 @@ jobs:
       - uses: actions/checkout@v4
       - run: make test-action
 
+  # Checks the formal models: every rule holds and every example is possible.
+  model:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - run: make check scenarios check-action scenarios-action
+
   # Runs the published entrypoint the way another CI would: a read-only
   # checkout mounted at /repo, no network, a ref to diff against.
   smoke:

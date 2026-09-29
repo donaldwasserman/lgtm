@@ -1,5 +1,9 @@
 # lgtm
 
+[![Release](https://img.shields.io/github/v/release/donaldwasserman/lgtm)](https://github.com/donaldwasserman/lgtm/releases)
+[![Marketplace](https://img.shields.io/badge/marketplace-LGTM%20Review%20Gate-blue?logo=github)](https://github.com/marketplace/actions/lgtm-review-gate)
+[![CI](https://github.com/donaldwasserman/lgtm/actions/workflows/ci.yml/badge.svg)](https://github.com/donaldwasserman/lgtm/actions/workflows/ci.yml)
+
 `lgtm` looks at a pull request and decides whether it needs a human review.
 
 Small, shallow changes pass on their own. Changes that dig deep into existing
@@ -63,10 +67,6 @@ jobs:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.sha }}
 
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.25'
-
       - name: Get the code before the change
         env:
           BASE_REF: ${{ github.event.pull_request.base.ref }}
@@ -75,7 +75,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/lgtm/base"
           git archive "$(git merge-base "origin/$BASE_REF" HEAD)" | tar -x -C "$RUNNER_TEMP/lgtm/base"
 
-      - uses: donaldwasserman/lgtm@main
+      - uses: donaldwasserman/lgtm@v1
         with:
           base: ${{ runner.temp }}/lgtm/base
           head: ${{ github.workspace }}
@@ -95,10 +95,18 @@ troubleshooting): **[docs/action.md](docs/action.md)**.
 
 ## Command-line tool
 
-Requires Go 1.25+ and a C compiler (the code parser is written in C).
+Install one of these ways:
 
 ```bash
-make build          # produces bin/lgtm
+# Prebuilt binary (Linux and macOS): pick lgtm_<version>_<os>_<arch>.tar.gz
+# from https://github.com/donaldwasserman/lgtm/releases, e.g.
+curl -fsSL https://github.com/donaldwasserman/lgtm/releases/download/v1.0.0/lgtm_1.0.0_linux_amd64.tar.gz | tar -xz lgtm
+
+# Docker
+docker run --rm -v "$PWD:/src" ghcr.io/donaldwasserman/lgtm:1 --base /src/base --head /src/head
+
+# From source (needs Go 1.25+ and a C compiler)
+go install github.com/donaldwasserman/lgtm/cmd/lgtm@latest
 ```
 
 `lgtm` compares two folders, not two git commits. Put the "before" code in one
@@ -108,7 +116,7 @@ folder and point `lgtm` at both:
 BASE=$(git merge-base origin/main HEAD)
 mkdir -p /tmp/lgtm-base
 git archive "$BASE" | tar -x -C /tmp/lgtm-base
-bin/lgtm --base /tmp/lgtm-base --head .
+lgtm --base /tmp/lgtm-base --head .
 ```
 
 | Flag | Default | Meaning |
@@ -119,12 +127,13 @@ bin/lgtm --base /tmp/lgtm-base --head .
 | `--theta-breadth` | `6` | Number of files that forces review |
 | `--epsilon-trivial` | `1` | Total depth at or below which a change is too small to matter |
 | `--trusted` | `false` | Treat the author as trusted (skips review). You decide who that is |
+| `--version` | | Print the version |
 
 **Exit code:** `0` no review needed, `1` review needed, `2` error. The JSON
 report always goes to standard output:
 
 ```console
-$ bin/lgtm --base /tmp/base --head /tmp/head
+$ lgtm --base /tmp/base --head /tmp/head
 {
   "requiresReview": false,
   "metrics": { "DepthMod": 6, "DepthNew": 1, "Breadth": 1, "DepthTotal": 6,
@@ -156,4 +165,7 @@ Other files are ignored, as are `.git`, `node_modules`, `vendor`, `target`,
 
 - [docs/action.md](docs/action.md) — GitHub Action reference
 - [docs/development.md](docs/development.md) — building, testing, and the formal model
-- [docs/releasing.md](docs/releasing.md) — how versions are published
+- [docs/releasing.md](docs/releasing.md) — versions and how to publish one
+- [CHANGELOG.md](CHANGELOG.md) — what changed in each version
+
+MIT licensed. See [LICENSE](LICENSE).

@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"lgtm/eval"
+	"github.com/donaldwasserman/lgtm/eval"
 )
 
 // TestAnalyzeRequiresReview drives the full pipeline (scan -> diff -> metrics
