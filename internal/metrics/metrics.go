@@ -3,9 +3,9 @@
 package metrics
 
 import (
-	"lgtm/eval"
-	"lgtm/internal/diff"
-	"lgtm/internal/model"
+	"github.com/donaldwasserman/lgtm/eval"
+	"github.com/donaldwasserman/lgtm/internal/diff"
+	"github.com/donaldwasserman/lgtm/internal/model"
 )
 
 // Compute converts a diff result and the caller's trust verdict into

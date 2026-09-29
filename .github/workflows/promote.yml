@@ -1,0 +1,63 @@
+# Runs when a person publishes a release on GitHub (see docs/releasing.md).
+# Points the moving tags at it: the Docker tags 1.2, 1 and latest, and the git
+# tag v1 that `uses: donaldwasserman/lgtm@v1` follows. Nothing is rebuilt: the
+# image publish.yml pushed for the version tag is the one promoted.
+name: promote
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/lgtm
+
+jobs:
+  promote:
+    if: ${{ !github.event.release.prerelease }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - name: Parse version
+        id: v
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          [[ "$TAG" =~ ^v(([0-9]+)\.([0-9]+))\.[0-9]+$ ]] || { echo "::error::not a version tag: $TAG"; exit 1; }
+          {
+            echo "version=${TAG#v}"
+            echo "minor=${BASH_REMATCH[1]}"
+            echo "major=${BASH_REMATCH[2]}"
+          } >> "$GITHUB_OUTPUT"
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/setup-buildx-action@v3
+      # Moved before the git tag, so @v1 never points at a release whose
+      # image is missing.
+      - name: Point Docker tags at this release
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+          MINOR: ${{ steps.v.outputs.minor }}
+          MAJOR: ${{ steps.v.outputs.major }}
+        run: |
+          docker buildx imagetools inspect "$IMAGE:$VERSION" >/dev/null \
+            || { echo "::error::$IMAGE:$VERSION not found; did publish.yml finish for this tag?"; exit 1; }
+          docker buildx imagetools create \
+            -t "$IMAGE:$MINOR" -t "$IMAGE:$MAJOR" -t "$IMAGE:latest" "$IMAGE:$VERSION"
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+      - name: Point the major git tag at this release
+        env:
+          MAJOR: v${{ steps.v.outputs.major }}
+        run: |
+          git tag -f "$MAJOR" HEAD
+          git push -f origin "refs/tags/$MAJOR"
+          echo "moved $MAJOR to ${{ github.event.release.tag_name }}"

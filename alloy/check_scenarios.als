@@ -1,4 +1,4 @@
--- One satisfiable scenario per row of WORKFLOW_LOGIC.md, plus the review
+-- One satisfiable scenario per row of the table in docs/action.md, plus the review
 -- reductions that the table's "latest review" wording leaves implicit.
 --
 -- These double as non-vacuity witnesses for check_properties.als: an

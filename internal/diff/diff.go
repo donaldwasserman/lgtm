@@ -5,7 +5,7 @@ package diff
 import (
 	"sort"
 
-	"lgtm/internal/model"
+	"github.com/donaldwasserman/lgtm/internal/model"
 )
 
 // Result holds the file-level changes between a base and head scan.

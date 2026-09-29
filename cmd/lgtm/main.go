@@ -21,11 +21,11 @@ import (
 	"os"
 	"sort"
 
-	"lgtm/eval"
-	"lgtm/internal/diff"
-	"lgtm/internal/metrics"
-	"lgtm/internal/model"
-	"lgtm/internal/parse"
+	"github.com/donaldwasserman/lgtm/eval"
+	"github.com/donaldwasserman/lgtm/internal/diff"
+	"github.com/donaldwasserman/lgtm/internal/metrics"
+	"github.com/donaldwasserman/lgtm/internal/model"
+	"github.com/donaldwasserman/lgtm/internal/parse"
 )
 
 // schemaVersion is bumped whenever a field of report is renamed, removed or
@@ -60,6 +60,9 @@ type fileSummary struct {
 	Kind string `json:"kind"`
 }
 
+// version is set at build time with -ldflags "-X main.version=...".
+var version = "dev"
+
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
@@ -78,6 +81,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	trusted := fs.Bool("trusted", false, "submitter is a trusted contributor (exempts review); the caller decides who is trusted")
 	output := fs.String("output", "", "also write the JSON report to this file")
 	exitZero := fs.Bool("exit-zero", false, "exit 0 whatever the verdict; failures still exit non-zero")
+	showVersion := fs.Bool("version", false, "print the version and exit")
 
 	fs.Usage = func() {
 		fmt.Fprintf(stderr, "Usage: lgtm --base <dir> --head <dir> [flags]\n")
@@ -91,6 +95,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 			return 0
 		}
 		return 2
+	}
+
+	if *showVersion {
+		fmt.Fprintln(stdout, version)
+		return 0
 	}
 
 	dirMode := *base != "" || *head != ""

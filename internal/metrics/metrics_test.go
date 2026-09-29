@@ -6,9 +6,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"lgtm/eval"
-	"lgtm/internal/diff"
-	"lgtm/internal/parse"
+	"github.com/donaldwasserman/lgtm/eval"
+	"github.com/donaldwasserman/lgtm/internal/diff"
+	"github.com/donaldwasserman/lgtm/internal/parse"
 )
 
 func TestComputeFromRealDiff(t *testing.T) {

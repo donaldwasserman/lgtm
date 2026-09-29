@@ -6,7 +6,7 @@ package eval_test
 import (
 	"testing"
 
-	"lgtm/eval"
+	"github.com/donaldwasserman/lgtm/eval"
 )
 
 var alloyCases = []struct {

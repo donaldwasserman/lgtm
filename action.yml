@@ -1,5 +1,9 @@
-name: 'lgtm'
-description: 'Compare base vs head source trees and decide whether the PR requires review.'
+name: 'LGTM Review Gate'
+description: 'Flags pull requests that need a human review, and blocks them until someone approves.'
+author: 'Donald Wasserman'
+branding:
+  icon: 'check-circle'
+  color: 'green'
 inputs:
   base-ref:
     description: >-
@@ -37,11 +41,14 @@ inputs:
     default: ''
   image:
     description: >-
-      The lgtm container image that evaluates the change. The action pulls it
-      unless it is already present locally, so a workflow can build its own and
-      pass the local tag.
+      The lgtm container image that evaluates the change. Empty picks the image
+      matching this action's version: a release tag (v1, v1.2.3) uses that
+      release's image, a commit SHA uses the image built from that commit, and
+      anything else uses the "main" image. The action pulls it unless it is
+      already present locally, so a workflow can build its own and pass the
+      local tag.
     required: false
-    default: 'ghcr.io/donaldwasserman/lgtm:main'
+    default: ''
   theta-depth:
     description: 'High depth threshold (default 7).'
     required: false
@@ -127,13 +134,35 @@ outputs:
 runs:
   using: 'composite'
   steps:
-    # Pulls up front so a registry failure is reported as such, rather than
-    # surfacing as an exit code from `docker run` that reads like an lgtm crash.
+    # Picks the image, then pulls it up front so a registry failure is
+    # reported as such, rather than surfacing as an exit code from
+    # `docker run` that reads like an lgtm crash.
     - name: 'Pull lgtm image'
+      id: image
       shell: bash
       env:
         IMAGE: ${{ inputs.image }}
       run: |
+        set -uo pipefail
+        if [ -z "$IMAGE" ]; then
+          # The runner checks remote actions out to .../<owner>/<repo>/<ref>,
+          # so the path says which ref the caller asked for. github.action_ref
+          # would say the same, but it is unreliable inside composite actions.
+          ref=$(basename "$GITHUB_ACTION_PATH")
+          version=$(tr -d '[:space:]' < "$GITHUB_ACTION_PATH/VERSION" 2>/dev/null || true)
+          if [ -n "$version" ] && { [ "$ref" = "v$version" ] || [ "$ref" = "v${version%%.*}" ]; }; then
+            tag="$version"                  # a release: @v1.2.3 or @v1
+          elif [[ "$ref" =~ ^[0-9a-f]{40}$ ]]; then
+            tag="sha-${ref:0:7}"            # pinned to a commit: publish.yml tags every main commit
+          else
+            tag=main                        # a branch, or uses: ./
+          fi
+          IMAGE="ghcr.io/donaldwasserman/lgtm:$tag"
+        fi
+        # Recorded before pulling, so the evaluate step names the image even
+        # when the pull fails.
+        echo "ref=$IMAGE" >> "$GITHUB_OUTPUT"
+
         if docker image inspect "$IMAGE" >/dev/null 2>&1; then
           echo "using local image $IMAGE"
         else
@@ -152,7 +181,9 @@ runs:
         GH_TOKEN: ${{ inputs.github-token }}
         REPO: ${{ github.repository }}
         PR: ${{ github.event.pull_request.number }}
-        HEAD_DIR: ${{ inputs.head }}
+        # Directory mode names the head tree; in git mode the checkout is the
+        # head tree (actions/checkout at the head SHA), as for LGTM_REPO below.
+        HEAD_DIR: ${{ inputs.head || inputs.repo || github.workspace }}
         MODE: ${{ inputs.trust-mode }}
         AUTHOR: ${{ inputs.author }}
         TRUST_PERCENT: ${{ inputs.trust-percent }}
@@ -359,7 +390,7 @@ runs:
       id: evaluate
       shell: bash
       env:
-        IMAGE: ${{ inputs.image }}
+        IMAGE: ${{ steps.image.outputs.ref }}
         LGTM_BASE_REF: ${{ inputs.base-ref }}
         LGTM_HEAD_REF: ${{ inputs.head-ref }}
         LGTM_REPO: ${{ inputs.repo || github.workspace }}
@@ -500,7 +531,7 @@ runs:
         fi
 
         if [ "$IS_FORK" = "true" ]; then
-          echo "::warning::pull requests from forks get a read-only token, so the '$CHECK_NAME' check cannot be published. Fork PRs are unsupported; see the README."
+          echo "::warning::pull requests from forks get a read-only token, so the '$CHECK_NAME' check cannot be published. Fork PRs are unsupported; see docs/action.md."
         fi
 
         if [ "$REQUIRES_REVIEW" = "true" ]; then

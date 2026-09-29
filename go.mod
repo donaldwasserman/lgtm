@@ -1,4 +1,4 @@
-module lgtm
+module github.com/donaldwasserman/lgtm
 
 go 1.25
 

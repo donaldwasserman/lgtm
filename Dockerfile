@@ -18,9 +18,13 @@ FROM builder AS test
 RUN go test ./...
 
 FROM builder AS build
-RUN CGO_ENABLED=1 go build -trimpath -ldflags='-s -w' -o /out/lgtm ./cmd/lgtm
+ARG VERSION=dev
+RUN CGO_ENABLED=1 go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o /out/lgtm ./cmd/lgtm
 
 FROM debian:bookworm-slim
+LABEL org.opencontainers.image.source="https://github.com/donaldwasserman/lgtm" \
+      org.opencontainers.image.description="Decides whether a pull request needs a human review." \
+      org.opencontainers.image.licenses="MIT"
 RUN apt-get update \
  && apt-get install -y --no-install-recommends git ca-certificates \
  && rm -rf /var/lib/apt/lists/* \

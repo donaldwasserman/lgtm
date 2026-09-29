@@ -7,6 +7,9 @@ OUTPUT = $(ALLOY_DIR)/output
 GO ?= go
 IMAGE ?= lgtm:local
 BASE_REF ?= origin/main
+# Tagged builds report the tag; anything else reports VERSION plus the commit.
+LGTM_VERSION ?= $(shell git describe --tags --exact-match 2>/dev/null || echo "$$(cat VERSION)-dev+$$(git rev-parse --short HEAD 2>/dev/null)")
+LDFLAGS = -X main.version=$(LGTM_VERSION)
 
 .PHONY: setup check scenarios check-action scenarios-action all verify generate generate-instances build test test-action docker-build docker-test docker-run clean
 
@@ -87,7 +90,7 @@ verify: generate build
 # Build the lgtm CLI binary from the AST-comparison + decision pipeline.
 build:
 	@echo "=== Building lgtm CLI ==="
-	$(GO) build -o bin/lgtm ./cmd/lgtm
+	$(GO) build -ldflags "$(LDFLAGS)" -o bin/lgtm ./cmd/lgtm
 
 # Run the Go test suite without regenerating the Alloy-driven test.
 test:
@@ -101,13 +104,15 @@ test-action:
 	./scripts/test-approval.sh
 	@echo "=== Action trust logic ==="
 	./scripts/test-trust.sh
+	@echo "=== Action image selection ==="
+	./scripts/test-image.sh
 	@echo "=== Action manifest ==="
 	./scripts/test-manifest.sh
 
 # Build the runtime image. Java and Alloy are not in it: the formal
 # verification targets are for developers only.
 docker-build:
-	docker build -t $(IMAGE) .
+	docker build --build-arg VERSION=$(LGTM_VERSION) -t $(IMAGE) .
 
 # Run the Go suite inside the image's builder, as CI does.
 docker-test:

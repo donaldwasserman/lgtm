@@ -8,7 +8,7 @@ import (
 
 	sitter "github.com/smacker/go-tree-sitter"
 
-	"lgtm/internal/model"
+	"github.com/donaldwasserman/lgtm/internal/model"
 )
 
 // Scan walks a directory and parses every supported source file into a

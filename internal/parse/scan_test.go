@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"lgtm/internal/model"
+	"github.com/donaldwasserman/lgtm/internal/model"
 )
 
 func TestScanAndCallDepth(t *testing.T) {
