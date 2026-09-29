@@ -25,25 +25,30 @@ jobs:
           # On pull_request_review the default ref is the base branch, so
           # without this the action would analyze the wrong tree.
           ref: ${{ github.event.pull_request.head.sha }}
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.25'
-      - name: Determine merge base
-        id: base
+      - name: Fetch base branch
         env:
           # GITHUB_BASE_REF is not set on pull_request_review.
           BASE_REF: ${{ github.event.pull_request.base.ref }}
-        run: |
-          git fetch --no-tags origin "$BASE_REF"
-          echo "ref=$(git merge-base "origin/$BASE_REF" HEAD)" >> "$GITHUB_OUTPUT"
-      - name: Extract base tree
-        run: |
-          mkdir -p "$RUNNER_TEMP/lgtm/base"
-          git archive "${{ steps.base.outputs.ref }}" | tar -x -C "$RUNNER_TEMP/lgtm/base"
+        run: git fetch --no-tags origin "$BASE_REF"
+      # The gate runs the image built from this PR, just as `uses: ./` runs
+      # this PR's action.yml, so a change to the report contract is judged by
+      # the code that defines it. Consumers use the published image instead.
+      - uses: docker/setup-buildx-action@v3
+      # continue-on-error: a failed build must still reach the action, whose
+      # pull step then fails and publishes an "Analysis failed" check. Stopping
+      # here would post no check at all and block the PR on a required check.
+      - uses: docker/build-push-action@v6
+        continue-on-error: true
+        with:
+          context: .
+          load: true
+          tags: lgtm:pr
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
       - uses: ./
         with:
-          base: ${{ runner.temp }}/lgtm/base
-          head: ${{ github.workspace }}
+          image: lgtm:pr
+          base-ref: origin/${{ github.event.pull_request.base.ref }}
           theta-depth: '7'
           theta-breadth: '6'
           epsilon-trivial: '1'

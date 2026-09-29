@@ -1,19 +1,47 @@
 name: 'lgtm'
 description: 'Compare base vs head source trees and decide whether the PR requires review.'
 inputs:
+  base-ref:
+    description: >-
+      Git ref the pull request targets, such as "origin/main". lgtm diffs the
+      head commit against its merge base with this ref, so the checkout needs
+      full history (fetch-depth 0) and the ref fetched. Use this or
+      "base"/"head", not both.
+    required: false
+    default: ''
+  head-ref:
+    description: 'Git ref of the change itself, used with "base-ref".'
+    required: false
+    default: 'HEAD'
+  repo:
+    description: >-
+      Path to the git checkout used with "base-ref". Defaults to the
+      github.workspace path. Must be an already-resolved path; see "base".
+    required: false
+    default: ''
   base:
     description: >-
-      Path to the base (pre-PR) source tree. Must be an already-resolved path:
-      use the runner.temp expression rather than "$RUNNER_TEMP/...", as the
-      value is passed to the tool verbatim and is not expanded by a shell.
-      (Descriptions must not contain expression syntax: the runner evaluates
-      it here too, and rejects the whole action if it does.)
-    required: true
+      Path to the base (pre-PR) source tree, for directory mode. Must be an
+      already-resolved path: use the runner.temp expression rather than
+      "$RUNNER_TEMP/...", as the value is passed to the tool verbatim and is
+      not expanded by a shell. (Descriptions must not contain expression
+      syntax: the runner evaluates it here too, and rejects the whole action if
+      it does.)
+    required: false
+    default: ''
   head:
     description: >-
-      Path to the head (post-PR) source tree, normally the github.workspace path.
-      Must be an already-resolved path; see "base".
-    required: true
+      Path to the head (post-PR) source tree, for directory mode, normally the
+      github.workspace path. Must be an already-resolved path; see "base".
+    required: false
+    default: ''
+  image:
+    description: >-
+      The lgtm container image that evaluates the change. The action pulls it
+      unless it is already present locally, so a workflow can build its own and
+      pass the local tag.
+    required: false
+    default: 'ghcr.io/donaldwasserman/lgtm:main'
   theta-depth:
     description: 'High depth threshold (default 7).'
     required: false
@@ -99,10 +127,18 @@ outputs:
 runs:
   using: 'composite'
   steps:
-    - name: 'Build lgtm'
+    # Pulls up front so a registry failure is reported as such, rather than
+    # surfacing as an exit code from `docker run` that reads like an lgtm crash.
+    - name: 'Pull lgtm image'
       shell: bash
-      working-directory: ${{ github.action_path }}
-      run: go build -o "$GITHUB_ACTION_PATH/bin/lgtm" ./cmd/lgtm
+      env:
+        IMAGE: ${{ inputs.image }}
+      run: |
+        if docker image inspect "$IMAGE" >/dev/null 2>&1; then
+          echo "using local image $IMAGE"
+        else
+          docker pull "$IMAGE"
+        fi
 
     # Resolves the trusted-contributor exemption before lgtm runs, since lgtm
     # takes only the resulting bool. Every failure path here degrades to "not
@@ -323,6 +359,10 @@ runs:
       id: evaluate
       shell: bash
       env:
+        IMAGE: ${{ inputs.image }}
+        LGTM_BASE_REF: ${{ inputs.base-ref }}
+        LGTM_HEAD_REF: ${{ inputs.head-ref }}
+        LGTM_REPO: ${{ inputs.repo || github.workspace }}
         LGTM_BASE: ${{ inputs.base }}
         LGTM_HEAD: ${{ inputs.head }}
         LGTM_THETA_DEPTH: ${{ inputs.theta-depth }}
@@ -332,31 +372,52 @@ runs:
       run: |
         set -uo pipefail
 
-        report=$("$GITHUB_ACTION_PATH/bin/lgtm" \
-          --base "$LGTM_BASE" \
-          --head "$LGTM_HEAD" \
-          --theta-depth "$LGTM_THETA_DEPTH" \
-          --theta-breadth "$LGTM_THETA_BREADTH" \
-          --epsilon-trivial "$LGTM_EPSILON_TRIVIAL" \
-          --trusted="$LGTM_TRUSTED_INPUT") && code=0 || code=$?
+        # Inputs are mounted read-only at fixed paths; the container sees
+        # nothing else of the runner. It runs as the runner's uid so it can
+        # write the report into RUNNER_TEMP.
+        args=(docker run --rm --network none --user "$(id -u):$(id -g)"
+              -v "$RUNNER_TEMP:/out")
+        mode=''
+        if [ -n "$LGTM_BASE_REF" ] && [ -z "$LGTM_BASE$LGTM_HEAD" ]; then
+          mode=git
+          args+=(-v "$LGTM_REPO:/repo:ro" "$IMAGE"
+                 --repo /repo --base-ref "$LGTM_BASE_REF" --head-ref "$LGTM_HEAD_REF")
+        elif [ -z "$LGTM_BASE_REF" ] && [ -n "$LGTM_BASE" ] && [ -n "$LGTM_HEAD" ]; then
+          mode=dirs
+          args+=(-v "$LGTM_BASE:/trees/base:ro" -v "$LGTM_HEAD:/trees/head:ro" "$IMAGE"
+                 --base /trees/base --head /trees/head)
+        fi
 
-        echo "$report"
+        report="$RUNNER_TEMP/lgtm-report.json"
+        rm -f "$report"
+        if [ -z "$mode" ]; then
+          echo "::error::set either base-ref, or both base and head"
+          code=2
+        else
+          "${args[@]}" \
+            --output /out/lgtm-report.json \
+            --theta-depth "$LGTM_THETA_DEPTH" \
+            --theta-breadth "$LGTM_THETA_BREADTH" \
+            --epsilon-trivial "$LGTM_EPSILON_TRIVIAL" \
+            --trusted="$LGTM_TRUSTED_INPUT" && code=0 || code=$?
+        fi
+
         echo "exit-code=$code" >> "$GITHUB_OUTPUT"
 
-        case "$code" in
-          0) echo "requires-review=false" >> "$GITHUB_OUTPUT" ;;
-          1) echo "requires-review=true" >> "$GITHUB_OUTPUT" ;;
-          # Deliberately left unset: we have no verdict, and claiming "false"
-          # here would wave the change through on a broken analyzer.
-          *) echo "::error::lgtm failed with exit code $code" ;;
+        # The verdict is read from the report, and must agree with the exit
+        # code. Either one missing or out of step means no verdict: claiming
+        # "false" here would wave the change through on a broken analyzer.
+        verdict=$(jq -r '.verdict // empty' "$report" 2>/dev/null) || verdict=''
+        case "$code:$verdict" in
+          0:no-review)       echo "requires-review=false" >> "$GITHUB_OUTPUT" ;;
+          1:review-required) echo "requires-review=true" >> "$GITHUB_OUTPUT" ;;
+          *) echo "::error::lgtm failed (exit code $code, verdict '${verdict:-none}')" ;;
         esac
 
-        # Stash the report for the check-run step; $GITHUB_OUTPUT is not a
-        # reliable carrier for multi-line JSON containing arbitrary paths.
-        printf '%s' "$report" > "$RUNNER_TEMP/lgtm-report.json"
+        [ -f "$report" ] || printf '' > "$report"
         {
           echo "report<<LGTM_REPORT_EOF"
-          echo "$report"
+          cat "$report"
           echo "LGTM_REPORT_EOF"
         } >> "$GITHUB_OUTPUT"
 

@@ -5,8 +5,10 @@ JAR = $(ALLOY_DIR)/alloy.jar
 RUNTIME = $(ALLOY_DIR)/runtime
 OUTPUT = $(ALLOY_DIR)/output
 GO ?= go
+IMAGE ?= lgtm:local
+BASE_REF ?= origin/main
 
-.PHONY: setup check scenarios check-action scenarios-action all verify generate generate-instances build test test-action clean
+.PHONY: setup check scenarios check-action scenarios-action all verify generate generate-instances build test test-action docker-build docker-test docker-run clean
 
 $(JAR):
 	@echo "Downloading Alloy $(ALLOY_VERSION)..."
@@ -101,6 +103,21 @@ test-action:
 	./scripts/test-trust.sh
 	@echo "=== Action manifest ==="
 	./scripts/test-manifest.sh
+
+# Build the runtime image. Java and Alloy are not in it: the formal
+# verification targets are for developers only.
+docker-build:
+	docker build -t $(IMAGE) .
+
+# Run the Go suite inside the image's builder, as CI does.
+docker-test:
+	docker build --target test .
+
+# Evaluate the current checkout against BASE_REF with the local image. A git
+# worktree's .git points outside it, so run this from a regular clone.
+docker-run:
+	docker run --rm --network none -v "$(CURDIR):/repo:ro" $(IMAGE) \
+		--repo /repo --base-ref $(BASE_REF)
 
 all: check scenarios check-action scenarios-action generate build
 	@echo "=== All checks complete ==="
