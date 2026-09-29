@@ -5,7 +5,7 @@
 -- shown up.
 --
 -- The state/conclusion mapping formalized here is the table in
--- WORKFLOW_LOGIC.md, and the precedence between states is the order of the
+-- docs/action.md ("What the check means"), and the precedence between states is the order of the
 -- branches in the "Publish check run" step of action.yml.
 module check_run
 
@@ -55,7 +55,7 @@ sig Gate {
   checkPublishable: one BOOL
 }
 
--- The five titled states of WORKFLOW_LOGIC.md, plus the row where nothing is
+-- The five titled states of docs/action.md, plus the row where nothing is
 -- published:
 --   SNotRequired      "No review required"
 --   SApproved         "Review required - approved"

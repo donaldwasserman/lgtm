@@ -56,7 +56,7 @@ jobs:
           # the top contributor, who writes nearly every PR here, so the gate
           # would never fire on its own repository. Set trust-mode to
           # 'codeowners' (or a ranking mode) on a repo with several active
-          # contributors; see "Trust modes" in the README.
+          # contributors; see "Trust modes" in docs/action.md.
           trust-mode: 'none'
           check-name: 'LGTM / review-gate'
           label: 'needs-review'

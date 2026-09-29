@@ -500,7 +500,7 @@ runs:
         fi
 
         if [ "$IS_FORK" = "true" ]; then
-          echo "::warning::pull requests from forks get a read-only token, so the '$CHECK_NAME' check cannot be published. Fork PRs are unsupported; see the README."
+          echo "::warning::pull requests from forks get a read-only token, so the '$CHECK_NAME' check cannot be published. Fork PRs are unsupported; see docs/action.md."
         fi
 
         if [ "$REQUIRES_REVIEW" = "true" ]; then

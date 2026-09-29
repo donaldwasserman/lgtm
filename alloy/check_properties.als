@@ -38,7 +38,7 @@ assert ApprovalDoesNotExcuseFailure {
   }
 }
 
--- The README's central claim: a green check means the change is below the
+-- The docs' central claim: a green check means the change is below the
 -- thresholds, or it is above them and someone has approved it. Nothing else
 -- is ever green.
 assert GreenMeansSimpleOrApproved {
@@ -99,7 +99,7 @@ assert UnparsedNeverGreenWithoutApproval {
   }
 }
 
--- Bridging to pr_review: the top-20% exemption survives the check layer, so a
+-- Bridging to pr_review: the trusted-contributor exemption survives the check layer, so a
 -- trusted contributor's parseable change is green with no reviews at all.
 assert TrustedContributorStaysGreen {
   all g: Gate | {
