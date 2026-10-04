@@ -355,7 +355,7 @@ is why the scan is needed.
 | 20 | Build order: Alloy → groundwork → cognitive complexity → significance → blast radius. |
 | 21 | Ruby open classes, Ruby visibility forms and JS CommonJS + ESM exports are fully supported at launch. |
 | 22 | Defaults ship as guesses; the harness repo collects data to tune them. |
-| 23 | No v2; v1 is treated as never released. |
+| 23 | No v2; v1 is treated as never released. *Superseded on main: 0.0.1 was released (#5) while this branch was in flight, so these changes ship as the next 0.x release, listed under Unreleased in the changelog.* |
 | 24 | k = 3 and the name-match cut-off are fixed internally. |
 | 25 | The compound rule is controlled by the significance threshold. |
 | 26 | The trusted-author exemption is unchanged; it never covers an unparsed file. |
