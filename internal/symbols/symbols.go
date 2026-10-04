@@ -63,6 +63,50 @@ func (s *Symbol) ID() string {
 	return s.Module + "|" + s.Container + "|" + s.Name
 }
 
+// Wrapper is the syntax around the declaration that belongs to it - a
+// Python decorated_definition, a JS export statement - or nil.
+func (s *Symbol) Wrapper() *model.Node { return s.wrapper }
+
+// Decorators is the wrapper when it changes behaviour (a Python decorated
+// definition), or nil. An export statement only changes export status,
+// which is compared on its own.
+func (s *Symbol) Decorators() *model.Node {
+	if s.wrapper != nil && s.wrapper.Type == "decorated_definition" {
+		return s.wrapper
+	}
+	return nil
+}
+
+// Tokens returns the source text of a node that no named child covers -
+// operators, keywords and punctuation, which the model keeps no node for -
+// with whitespace removed. Comments are named children, so they never
+// appear here, and where they sat leaves no trace.
+func Tokens(n *model.Node) string {
+	if len(n.Children) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	pos := n.Start
+	emit := func(from, to uint32) {
+		if to <= from || from < n.Start || to > n.End {
+			return
+		}
+		for _, r := range n.Text[from-n.Start : to-n.Start] {
+			if r != ' ' && r != '\t' && r != '\n' && r != '\r' {
+				b.WriteRune(r)
+			}
+		}
+	}
+	for _, c := range n.Children {
+		emit(pos, c.Start)
+		if c.End > pos {
+			pos = c.End
+		}
+	}
+	emit(pos, n.End)
+	return b.String()
+}
+
 // Display names the symbol for people: its module, then Container.Name.
 func (s *Symbol) Display() string {
 	name := s.Name
@@ -215,6 +259,8 @@ func (s *Symbol) fingerprint() string {
 		h.Write([]byte{0})
 		if len(n.Children) == 0 {
 			h.Write([]byte(n.Text))
+		} else {
+			h.Write([]byte(Tokens(n)))
 		}
 		h.Write([]byte{1})
 		for _, c := range n.Children {
@@ -223,6 +269,10 @@ func (s *Symbol) fingerprint() string {
 		h.Write([]byte{2})
 	}
 	walk(s.Node)
+	if w := s.Decorators(); w != nil {
+		skip[s.Node] = true
+		walk(w)
+	}
 	return hex.EncodeToString(h.Sum(nil))
 }
 

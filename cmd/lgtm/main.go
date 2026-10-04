@@ -27,6 +27,7 @@ import (
 	"github.com/donaldwasserman/lgtm/internal/metrics"
 	"github.com/donaldwasserman/lgtm/internal/model"
 	"github.com/donaldwasserman/lgtm/internal/parse"
+	"github.com/donaldwasserman/lgtm/internal/significance"
 	"github.com/donaldwasserman/lgtm/internal/symbols"
 )
 
@@ -206,6 +207,10 @@ func analyze(base, head string, gate eval.Gate, trusted bool) (report, bool, err
 	scores.CogDelta, scores.NewFunctionComplexity = &cog.Delta, &cog.NewMax
 	contributors["cogDelta"] = nonNil(cog.Deltas)
 	contributors["newFunctionComplexity"] = nonNil(cog.News)
+
+	sig := significance.Measure(pairs, nil)
+	scores.Significance = &sig.Score
+	contributors["significance"] = sig.Contributors()
 	facts := eval.Facts{Trusted: trusted, Unparsed: len(parseErrs) > 0}
 	d := eval.Evaluate(scores, facts, gate)
 
