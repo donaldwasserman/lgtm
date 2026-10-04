@@ -1,4 +1,4 @@
--- DRAFT: affected set and blast radius as bounded reverse reachability over
+-- affected set and blast radius as bounded reverse reachability over
 -- the BASE call graph, k = 3 (fixed, not configurable). u -> v in calls means
 -- "u calls (or references) v". Also the deletion exemption.
 module blast_radius
@@ -61,12 +61,12 @@ assert NewSymbolsHaveNoBaseRadius {
   all g: Graph, S: set Symbol | no (S & g.nodes) implies no radius3[g, S]
 }
 
--- Expected to FAIL: the radius excluding S is not monotone in S, because
--- growing S can absorb a former caller. Kept to document why the Go code
--- reports |affected| - |S| per change rather than comparing radii.
-assert RadiusMonotoneInChangeSet {
-  all g: Graph, S1, S2: set g.nodes | S1 in S2 implies radius3[g, S1] in radius3[g, S2]
-}
+-- The radius excluding S is NOT monotone in S: growing S can absorb a former
+-- caller. This run must stay satisfiable; it documents why lgtm never
+-- compares radii across change sets.
+run RadiusCanShrinkWhenMoreChanges {
+  some g: Graph, S1, S2: set g.nodes | S1 in S2 and not (radius3[g, S1] in radius3[g, S2])
+} for 5 but 1 Graph
 
 -- Deleting an existing symbol is exempt when it is not exported, the resolved
 -- graph finds no caller, and its name is mentioned nowhere else.
@@ -92,4 +92,3 @@ check UncalledHasNoRadius for 5 but 2 Graph
 check AffectedMonotoneInChangeSet for 5 but 2 Graph
 check MonotoneInEdges for 5 but 2 Graph
 check NewSymbolsHaveNoBaseRadius for 5 but 2 Graph
-check RadiusMonotoneInChangeSet for 5 but 2 Graph

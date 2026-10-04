@@ -34,6 +34,13 @@ func TestRunExitCodes(t *testing.T) {
 		{"both_modes", []string{"--base", trivialBase, "--head", trivialHead, "--repo", ".", "--base-ref", "main"}, 2},
 		{"bad_flag", []string{"--nope"}, 2},
 		{"missing_dir", []string{"--base", filepath.Join(t.TempDir(), "absent"), "--head", trivialHead}, 2},
+		// A threshold switched off cannot fire; breadth is what flags this one.
+		{"breadth_off", []string{"--base", broadBase, "--head", broad, "--theta-breadth", "off"}, 0},
+		// Zero would flag every change; "off" is the only way to disable.
+		{"zero_threshold", []string{"--base", trivialBase, "--head", trivialHead, "--theta-depth", "0"}, 2},
+		{"bad_threshold", []string{"--base", trivialBase, "--head", trivialHead, "--theta-cog", "lots"}, 2},
+		{"bad_level", []string{"--base", trivialBase, "--head", trivialHead, "--theta-significance", "severe"}, 2},
+		{"level_name", []string{"--base", trivialBase, "--head", trivialHead, "--theta-significance", "high"}, 0},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -77,6 +84,25 @@ func TestReportContract(t *testing.T) {
 	}
 	if rep["verdict"] != verdictReviewRequired || rep["requiresReview"] != true {
 		t.Errorf("verdict = %v, requiresReview = %v", rep["verdict"], rep["requiresReview"])
+	}
+	if r, _ := rep["reasons"].([]any); len(r) != 1 || r[0] != "breadth-files" {
+		t.Errorf("reasons = %v, want [breadth-files]", rep["reasons"])
+	}
+	scores, _ := rep["scores"].(map[string]any)
+	for _, k := range []string{"editDepth", "newDepth", "depthTotal", "breadthFiles",
+		"breadthModules", "cogDelta", "newFunctionComplexity", "significance", "blastRadius"} {
+		if _, ok := scores[k]; !ok {
+			t.Errorf("scores.%s missing; every measure is reported, null when unavailable", k)
+		}
+	}
+	gate, _ := rep["gate"].(map[string]any)
+	if gate["thetaDepth"] != float64(7) || gate["thetaModules"] != nil ||
+		gate["thetaSignificance"] != "crucial" {
+		t.Errorf("gate = %v, want the defaults (modules off)", gate)
+	}
+	facts, _ := rep["facts"].(map[string]any)
+	if facts["unparsed"] != false || facts["trusted"] != false || facts["analysisFailed"] != false {
+		t.Errorf("facts = %v", facts)
 	}
 }
 

@@ -1,5 +1,5 @@
-// Package metrics maps AST change output from the differ into the
-// eval.Metrics struct that drives the Alloy-grounded RequiresReview decision.
+// Package metrics turns the differ's output into eval.Scores, the per-measure
+// scores the gate reads.
 package metrics
 
 import (
@@ -8,17 +8,17 @@ import (
 	"github.com/donaldwasserman/lgtm/internal/model"
 )
 
-// Compute converts a diff result and the caller's trust verdict into
-// eval.Metrics:
+// Compute converts a diff result into the frozen v1 scores:
 //
-//	depthModified: max depth of modified + deleted (existing) AST nodes
-//	depthNew:      max depth of newly added nodes
-//	depthTotal:    max depth across all changed nodes
-//	breadth:       number of distinct files actually changed
-//	trusted:       caller-supplied contributor exemption
-//	unparsed:      caller-supplied flag that some file failed to parse
-func Compute(res *diff.Result, trusted, unparsed bool) eval.Metrics {
-	m := eval.Metrics{Trusted: trusted, Unparsed: unparsed}
+//	EditDepth:    max depth of modified + deleted (existing) AST nodes
+//	NewDepth:     max depth of newly added nodes
+//	DepthTotal:   max depth across all changed nodes
+//	BreadthFiles: number of distinct files actually changed
+//
+// The newer measures are left nil (unavailable) here; their own packages
+// fill them in.
+func Compute(res *diff.Result) eval.Scores {
+	var m eval.Scores
 	seenFiles := map[string]bool{}
 	for _, fc := range res.Files {
 		if len(fc.Changes) == 0 {
@@ -28,13 +28,13 @@ func Compute(res *diff.Result, trusted, unparsed bool) eval.Metrics {
 		for _, c := range fc.Changes {
 			switch c.Kind {
 			case model.KindInsert:
-				m.DepthNew = max(m.DepthNew, c.Depth)
+				m.NewDepth = max(m.NewDepth, c.Depth)
 			case model.KindDelete, model.KindModify:
-				m.DepthMod = max(m.DepthMod, c.Depth)
+				m.EditDepth = max(m.EditDepth, c.Depth)
 			}
 			m.DepthTotal = max(m.DepthTotal, c.Depth)
 		}
 	}
-	m.Breadth = len(seenFiles)
+	m.BreadthFiles = len(seenFiles)
 	return m
 }

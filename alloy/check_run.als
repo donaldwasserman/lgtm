@@ -1,5 +1,5 @@
--- The check-run layer that action.yml publishes on top of the pr_review
--- decision. pr_review answers "does this change need a human?"; this module
+-- The check-run layer that action.yml publishes on top of the gate
+-- (gate.als). The gate answers "does this change need a human?"; this module
 -- answers "what does the pull request's status check say?", which is a
 -- different question because it also depends on whether a human has since
 -- shown up.
@@ -10,7 +10,7 @@
 module check_run
 
 open util/integer
-open pr_review
+open gate
 
 -- What the analyzer produced. Failed covers exit code 2 and any path that
 -- leaves the action without a verdict at all, such as a failed build.
@@ -45,14 +45,17 @@ fact UniqueReviewOrder {
 
 -- One evaluation of one pull request: what the analyzer said, what reviews
 -- existed at that moment, and whether a check could be published at all.
-sig Gate {
+sig Evaluation {
   outcome: one Outcome,
   reviews: set Review,
   -- FALSE outside a pull request (a push build, say).
   isPullRequest: one BOOL,
   -- FALSE when check-name is empty, or when the token cannot write checks,
   -- which is how fork pull requests behave.
-  checkPublishable: one BOOL
+  checkPublishable: one BOOL,
+  -- What lgtm measured, and the gate the action configured.
+  scores: one Scores,
+  config: one Gate
 }
 
 -- The five titled states of docs/action.md, plus the row where nothing is
@@ -72,30 +75,30 @@ one sig Success, Failure, NoCheck extends Conclusion {}
 -- ---- the per-reviewer reduction ----
 
 -- The verdict-carrying reviews r left on g.
-fun verdicts[g: Gate, r: Reviewer]: set Review {
+fun verdicts[g: Evaluation, r: Reviewer]: set Review {
   { rv: g.reviews | rv.by = r and rv.verdict in verdictKinds }
 }
 
 -- r's most recent verdict on g, if r left one at all.
-fun latest[g: Gate, r: Reviewer]: lone Review {
+fun latest[g: Evaluation, r: Reviewer]: lone Review {
   { rv: verdicts[g, r] | no rv2: verdicts[g, r] | gt[int[rv2.revId], int[rv.revId]] }
 }
 
-pred approvedBy[g: Gate, r: Reviewer] { latest[g, r].verdict = APPROVED }
-pred blockedBy[g: Gate, r: Reviewer]  { latest[g, r].verdict = CHANGES_REQUESTED }
+pred approvedBy[g: Evaluation, r: Reviewer] { latest[g, r].verdict = APPROVED }
+pred blockedBy[g: Evaluation, r: Reviewer]  { latest[g, r].verdict = CHANGES_REQUESTED }
 
-pred hasApproval[g: Gate] { some r: Reviewer | approvedBy[g, r] }
-pred hasBlock[g: Gate]    { some r: Reviewer | blockedBy[g, r] }
+pred hasApproval[g: Evaluation] { some r: Reviewer | approvedBy[g, r] }
+pred hasBlock[g: Evaluation]    { some r: Reviewer | blockedBy[g, r] }
 
 -- ---- the published state ----
 
-pred publishable[g: Gate] {
+pred publishable[g: Evaluation] {
   g.isPullRequest = TRUE and g.checkPublishable = TRUE
 }
 
 -- Branch order matches action.yml: an outstanding block outranks an approval
 -- from someone else, and the analyzer's own failure outranks everything.
-fun gateState[g: Gate]: one State {
+fun gateState[g: Evaluation]: one State {
   (not publishable[g]) => SNotPublished
   else (g.outcome = Failed) => SFailed
   else (g.outcome = NotRequired) => SNotRequired
@@ -112,6 +115,6 @@ fun conclusionOf[s: State]: one Conclusion {
   else Failure
 }
 
-fun conclusion[g: Gate]: one Conclusion { conclusionOf[gateState[g]] }
+fun conclusion[g: Evaluation]: one Conclusion { conclusionOf[gateState[g]] }
 
-pred isGreen[g: Gate] { conclusion[g] = Success }
+pred isGreen[g: Evaluation] { conclusion[g] = Success }

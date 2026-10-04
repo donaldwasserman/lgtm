@@ -1,4 +1,4 @@
--- DRAFT: significance level of a change to one existing symbol, after the
+-- significance level of a change to one existing symbol, after the
 -- ChangeDistiller taxonomy (Fluri & Gall 2006). The level is the maximum over
 -- the parts of the symbol that changed. Symbols are module-scoped
 -- (docs/adr/0001-module-scoped-symbols.md), so moving a symbol between files

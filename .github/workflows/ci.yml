@@ -40,7 +40,7 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - run: make check scenarios check-action scenarios-action
+      - run: make check scenarios check-measures check-action scenarios-action
 
   # Runs the published entrypoint the way another CI would: a read-only
   # checkout mounted at /repo, no network, a ref to diff against.
@@ -63,7 +63,7 @@ jobs:
           docker run --rm --network none --user "$(id -u):$(id -g)" \
             -v "$PWD:/repo:ro" -v "$RUNNER_TEMP:/out" \
             lgtm:ci --repo /repo --base-ref HEAD~1 --output /out/report.json --exit-zero
-          jq -e '.schemaVersion == 1 and (.verdict == "review-required" or .verdict == "no-review")' \
+          jq -e '.schemaVersion == 2 and (.verdict == "review-required" or .verdict == "no-review")' \
             "$RUNNER_TEMP/report.json"
       - name: A missing base ref fails closed
         run: |

@@ -50,29 +50,22 @@ def app():
 		t.Fatal(err)
 	}
 	res := diff.Diff(baseFiles, headFiles)
-	m := Compute(res, false, false)
+	m := Compute(res)
 
-	if m.DepthNew <= 0 {
-		t.Fatalf("DepthNew = %d, want >0 (added call chain)", m.DepthNew)
+	if m.NewDepth <= 0 {
+		t.Fatalf("NewDepth = %d, want >0 (added call chain)", m.NewDepth)
 	}
-	if m.Breadth != 1 {
-		t.Fatalf("Breadth = %d, want 1 file touched", m.Breadth)
+	if m.BreadthFiles != 1 {
+		t.Fatalf("Breadth = %d, want 1 file touched", m.BreadthFiles)
 	}
-	if m.DepthTotal < m.DepthNew {
-		t.Fatalf("DepthTotal %d < DepthNew %d", m.DepthTotal, m.DepthNew)
+	if m.DepthTotal < m.NewDepth {
+		t.Fatalf("DepthTotal %d < NewDepth %d", m.DepthTotal, m.NewDepth)
 	}
 	// a 5-deep call chain should exceed default theta depth 7 only via nesting,
 	// so just sanity-check against a lenient threshold.
-	if !eval.RequiresReview(m, eval.Thresholds{ThetaDepth: 0, ThetaBreadth: 0, EpsilonTrivial: 0}) {
-		t.Fatal("expected RequiresReview true with zeroed (permissive) thresholds")
-	}
-}
-
-func TestTrustedPassesThrough(t *testing.T) {
-	res := &diff.Result{}
-	m := Compute(res, true, false)
-	if !m.Trusted {
-		t.Fatal("Trusted should pass through true")
+	g := eval.Gate{ThetaDepth: eval.On(1), ThetaBreadth: eval.On(1)}
+	if !eval.RequiresReview(m, eval.Facts{}, g) {
+		t.Fatal("expected RequiresReview true with the lowest thresholds")
 	}
 }
 
@@ -110,8 +103,8 @@ func TestBreadthCountsOnlyChangedFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	m := Compute(diff.Diff(baseFiles, headFiles), false, false)
-	if m.Breadth != 1 {
-		t.Fatalf("Breadth = %d, want 1 (only a.go changed)", m.Breadth)
+	m := Compute(diff.Diff(baseFiles, headFiles))
+	if m.BreadthFiles != 1 {
+		t.Fatalf("Breadth = %d, want 1 (only a.go changed)", m.BreadthFiles)
 	}
 }
