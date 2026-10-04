@@ -1,7 +1,9 @@
 # Plan: scores for blast radius, cognitive complexity and significance
 
-Status: agreed design, 2026-10-04. Nothing is implemented yet; the Alloy
-models are drafts in `alloy/drafts/`.
+Status: implemented on branch `claude/core-analysis-sophistication-7340ee`,
+2026-10-04, in six commits, one per phase. The Alloy models are promoted to
+`alloy/`. "As built" below records where the build differs from this design
+or adds to it.
 
 Vocabulary is defined in [GLOSSARY.md](../../GLOSSARY.md). The two
 decisions that shape everything else are recorded as ADRs:
@@ -31,11 +33,13 @@ workflow step. Custom rule expressions come later.
 | Cognitive complexity delta | Sonar points | max increase over existing functions | 5 | new |
 | New-function complexity | Sonar points | max over new functions | 25 | new |
 | Significance level | none < low < medium < high < crucial | highest level | crucial, plus the compound rule | new |
+| Called significance | same levels | highest level among changed symbols with callers | read by the compound rule (high) | new (as built) |
 | Blast radius | symbols | size of the union over changed symbols | 50 | new |
 
 The **compound rule** is part of significance. An exported signature change
-(high) forces review when the blast radius is above 0, as long as the
-significance threshold is on.
+(high) forces review when *that symbol* has callers, as long as the
+significance threshold is on. It reads the called significance score (see
+"As built").
 
 Each score's report entry lists the top contributing symbols, so the check
 summary can say *which* function or symbol triggered review.
@@ -369,6 +373,56 @@ is why the scan is needed.
   was crashing or nondeterministic.
 - **Two comparisons.** Edit depth and file breadth keep the path-based
   differ. The new measures compare module-scoped symbols (ADR 0001).
+
+### As built
+
+Where the build differs from the design above, or adds to it:
+
+- **Called significance (new score).** The model's compound rule was
+  "significance >= high *and* blast radius > 0", both PR-wide. That fires
+  when an uncalled exported signature change sits beside an unrelated
+  called edit, which contradicts decision 25's intent. `gate.als` gained
+  `called_significance`: the highest level among changed symbols that have
+  callers. It is constrained to be a restriction of significance, and the
+  compound rule reads it. All gate properties still hold, and
+  `scenario_uncalledSignatureBesideCalledEdit` pins the case.
+- **Recursion scores once per function**, as the paper says ("each method
+  in a recursion cycle"), and only for a true self-call: `f()`, or
+  `self.f`/`this.f`/the Go receiver. gocognit counts each bare call instead,
+  and miscounts builtins like `append()` inside a method named `append`.
+  Otherwise the two agree exactly on 2,519 Go functions.
+- **Operators are part of a symbol's content.** Tree-sitter keeps operators
+  as anonymous tokens, which the model drops. Fingerprints and canonical
+  hashes therefore include the text no named child covers, so `x > 0` to
+  `x >= 0` is a change. Cognitive complexity reads boolean operators the
+  same way.
+- **Rename detection is two-step.** The whole declaration is compared with
+  every bound name numbered in binding order; equal means a pure rename.
+  Otherwise parts are compared with only parameters numbered, so adding one
+  local early can't renumber the rest and fake a condition change.
+- **A deleted unexported symbol that isn't exempt is medium** (a signature
+  change of an unexported symbol). The design left its level open.
+- **Module breadth counts packages:** the Java package, otherwise the
+  file's directory. Symbol identity still uses each language's module, per
+  ADR 0001.
+- **No import-resolution tier.** References resolve by same file, then same
+  module, then a global name match capped at five definitions plus a short
+  stoplist (`String`, `get`, `__init__`, ...). Parsing imports per language
+  is a possible refinement; without it, the global tier is slightly more
+  lenient.
+- **No per-change owner on `NodeChange`.** The new measures work from the
+  symbol comparison, so the path-based differ didn't need it.
+- **Generated fixtures.** Beyond the gate scenarios, `make generate`
+  enumerates every significance level the model assigns (1,020 instances)
+  and 450 small reference graphs (dense, sparse, and with callers beyond
+  three hops). These become `internal/significance/levels_alloy_test.go`
+  and `internal/blast/affected_alloy_test.go`.
+- **`cmd/dumptree`** prints a file's tree with field names, for writing the
+  per-language tables.
+- **Fixed rule 4 has no trigger yet.** Every supported language and
+  construct is handled by every measure, so `analysisFailed` is always
+  false today. The fact, the gate logic and the model are in place for when
+  a measure can fail.
 
 ## Notes on the source report
 

@@ -644,16 +644,24 @@ runs:
             "| Measure | Score | Threshold | Requires review |",
             "| --- | --- | --- | --- |",
             "| Edit depth | \(.scores.editDepth) | \(.gate.thetaDepth | th) | \(fired("edit-depth")) |",
-            "| Files touched | \(.scores.breadthFiles) | \(.gate.thetaBreadth | th), with total depth \(.scores.depthTotal) > \(.gate.epsilonTrivial) | \(fired("breadth-files")) |",
+            "| Files touched | \(.scores.breadthFiles) | \(.gate.thetaBreadth | th), when total depth is over \(.gate.epsilonTrivial) (here \(.scores.depthTotal)) | \(fired("breadth-files")) |",
             "| Modules touched | \(.scores.breadthModules | sc) | \(.gate.thetaModules | th) | \(fired("breadth-modules")) |",
             "| Cognitive complexity increase | \(.scores.cogDelta | sc) | \(.gate.thetaCog | th) | \(fired("cog-delta")) |",
             "| New-function complexity | \(.scores.newFunctionComplexity | sc) | \(.gate.thetaNewFunction | th) | \(fired("new-function-complexity")) |",
-            "| Significance | \(.scores.significance | sc) | \(.gate.thetaSignificance | th) | \(fired("significance"))\(fired("called-exported-signature") | if . == "" then "" else " (exported signature with callers)" end) |",
+            "| Significance | \(.scores.significance | sc) | \(.gate.thetaSignificance | th) | \(fired("significance")) |",
+            "| Significance of changes with callers | \(.scores.calledSignificance | sc) | high, while significance is on | \(fired("called-exported-signature")) |",
             "| Blast radius | \(.scores.blastRadius | sc) | \(.gate.thetaBlast | th) | \(fired("blast-radius")) |",
             "| New-code depth | \(.scores.newDepth) | never gated | |",
             "",
             "Trusted contributor: \(.facts.trusted) (exempts every threshold). Unparsed files: \(.facts.unparsed). Analysis failed: \(.facts.analysisFailed). Either of the last two always requires review.",
             "",
+            ( [ .contributors // {} | to_entries[] | select(.value | length > 0) ] as $c
+              | if ($c | length) > 0 then
+                  "**What drove the scores**",
+                  "",
+                  ( $c[] | "- `\(.key)`: " + ( .value | map("`\(.symbol)` (\(.value // .level))") | join(", ") ) ),
+                  ""
+                else empty end ),
             "\(.files | length) file(s) changed."
           ' "$report" >> "$summary"
 

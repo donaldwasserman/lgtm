@@ -63,11 +63,27 @@ Current report (schema v1, abridged):
 }
 ```
 
-The **next schema** renames `metrics` to `scores` and bumps
-`schemaVersion`. The field names below are a *proposal*; lgtm's
-implementation will be the source of truth. **Put all knowledge of the
-report's shape in one adapter module** that maps any schema version to the
-harness's own canonical record, so a rename is a one-file fix.
+Schema 2 is now implemented. It renames `metrics` to `scores` and adds
+`facts`, `gate`, `reasons` and `contributors`. The README's "Result" section
+documents it. **Put all knowledge of the report's shape in one adapter
+module** that maps any schema version to the harness's own canonical record,
+so a rename is a one-file fix.
+
+Schema 2 report fields:
+
+```
+scores:  editDepth newDepth depthTotal breadthFiles breadthModules cogDelta
+         newFunctionComplexity significance calledSignificance blastRadius
+         (null = unavailable; significance levels are strings)
+facts:   trusted unparsed analysisFailed
+gate:    thetaDepth thetaBreadth epsilonTrivial thetaModules thetaCog
+         thetaNewFunction thetaSignificance thetaBlast   (null = off)
+reasons: edit-depth breadth-files breadth-modules cog-delta
+         new-function-complexity significance called-exported-signature
+         blast-radius unparsed analysis-failed
+contributors: { cogDelta | newFunctionComplexity | blastRadius:
+                [{symbol, file, value}], significance: [{symbol, file, level, parts}] }
+```
 
 ### Canonical score record (harness side)
 
@@ -81,6 +97,7 @@ harness's own canonical record, so a rename is a one-file fix.
 | `cog_delta` | int, Sonar points: largest increase in any existing function | — (new) |
 | `new_function_complexity` | int, Sonar points: largest complexity of any new function | — (new) |
 | `significance` | level: `none` < `low` < `medium` < `high` < `crucial` | — (new) |
+| `called_significance` | level, among changed symbols that have callers | — (new) |
 | `blast_radius` | int, symbols | — (new) |
 | `requires_review` | bool | `requiresReview` |
 | `unparsed` | bool | `metrics.Unparsed` |
@@ -239,6 +256,15 @@ language must get right:
 | Python | leading `_`; `__all__` overrides it when present |
 | Rust | `pub`, `pub(crate)`, no modifier |
 | Ruby | `private` / `protected` sections, `private :sym`, `private def`. A class reopened in another file is the same module, so a method moved between the two files is not a removal. |
+
+Called significance:
+
+- an exported signature change to a function something calls → review
+  required (`called_significance` high);
+- the same change to a function nothing calls → no review from this rule;
+- an uncalled exported signature change *plus* an unrelated edit to a
+  heavily called private function → still no review from this rule
+  (`called_significance` low).
 
 Moves:
 

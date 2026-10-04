@@ -55,9 +55,14 @@ the branch split off.
 | `base` | *(empty)* | Instead of `base-ref`: folder with the code before the change |
 | `head` | *(empty)* | Instead of `base-ref`: folder with the code after the change |
 | `image` | matches the action version | `lgtm` image to run. Used as-is if already on the runner, so a workflow can build its own |
-| `theta-depth` | `7` | Edit depth that forces review |
-| `theta-breadth` | `6` | Number of files that forces review |
-| `epsilon-trivial` | `1` | Total depth at or below which a change is too small to matter |
+| `theta-depth` | `7` | Edit depth that requires review |
+| `theta-breadth` | `6` | Files touched that require review (with total depth above `epsilon-trivial`) |
+| `epsilon-trivial` | `1` | Total depth at or below which a wide change is too small to matter |
+| `theta-modules` | `off` | Modules touched that require review |
+| `theta-cog` | `5` | Increase in one existing function's cognitive complexity that requires review |
+| `theta-new-function` | `25` | Cognitive complexity of one new function that requires review |
+| `theta-significance` | `crucial` | Significance level (`low`, `medium`, `high`, `crucial`) that requires review. While on, an exported signature change to something with callers also does |
+| `theta-blast` | `50` | Blast radius (callers within three hops of what changed) that requires review |
 | `trust-mode` | `none` | Who skips review: `none`, `codeowners`, `top-count`, `top-percent`. See [Trust modes](#trust-modes) |
 | `trust-count` | `10` | For `top-count`: how many top contributors are trusted |
 | `trust-percent` | `20` | For `top-percent`: what share of contributors are trusted |
@@ -66,6 +71,9 @@ the branch split off.
 | `label` | *(empty)* | Label added to flagged pull requests |
 | `request-reviewers` | *(empty)* | Comma-separated users or `org/team`s to request on flagged pull requests |
 | `github-token` | `${{ github.token }}` | Needs `checks: write` and `pull-requests: write` |
+
+Every `theta-*` input takes a number or `off`. What each measure means is in
+the [README](../README.md#how-it-decides).
 
 Set either `base-ref`, or both `base` and `head`. Anything else is reported as
 a failed analysis. Write paths as `${{ runner.temp }}/...`, not
@@ -130,7 +138,8 @@ A crash is a failure, not a neutral result, on purpose: GitHub treats
 
 ## Trust modes
 
-A trusted author's change skips review — unless a file couldn't be read. Set
+A trusted author's change skips every threshold — unless a file couldn't be
+parsed or analyzed. Set
 `trust-mode` to one of:
 
 | Mode | Trusted when |

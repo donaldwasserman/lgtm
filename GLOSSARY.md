@@ -82,3 +82,13 @@ _Avoid_: reach, ripple
 How strongly a change to one existing symbol can affect code outside it:
 none, low, medium, high or crucial.
 _Avoid_: weight, risk weight
+
+**Called significance**:
+The highest significance level among changed existing symbols that something
+calls. An exported signature change matters to the gate through it, so a
+change nobody calls does not borrow the callers of another.
+_Avoid_: compound significance
+
+**Contributor**:
+A symbol named in the report as one of those behind a score.
+_Avoid_: offender, culprit
