@@ -5,3 +5,5 @@ bin
 alloy/alloy.jar
 alloy/output
 alloy/runtime
+alloy/runtime-sig
+alloy/runtime-blast
