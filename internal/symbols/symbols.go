@@ -63,6 +63,18 @@ func (s *Symbol) ID() string {
 	return s.Module + "|" + s.Container + "|" + s.Name
 }
 
+// Display names the symbol for people: its module, then Container.Name.
+func (s *Symbol) Display() string {
+	name := s.Name
+	if s.Container != "" {
+		name = s.Container + "." + name
+	}
+	if s.Module == "" || s.Module == "." {
+		return name
+	}
+	return s.Module + " " + name
+}
+
 // Callable reports whether the symbol has a body of statements.
 func (s *Symbol) Callable() bool {
 	return (s.Kind == KindFunc || s.Kind == KindMethod) && Body(s.Node) != nil

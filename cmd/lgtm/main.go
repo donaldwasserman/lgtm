@@ -22,6 +22,7 @@ import (
 	"sort"
 
 	"github.com/donaldwasserman/lgtm/eval"
+	"github.com/donaldwasserman/lgtm/internal/cognitive"
 	"github.com/donaldwasserman/lgtm/internal/diff"
 	"github.com/donaldwasserman/lgtm/internal/metrics"
 	"github.com/donaldwasserman/lgtm/internal/model"
@@ -43,15 +44,18 @@ const (
 )
 
 type report struct {
-	SchemaVersion  int            `json:"schemaVersion"`
-	Verdict        string         `json:"verdict"`
-	RequiresReview bool           `json:"requiresReview"`
-	Reasons        []eval.Reason  `json:"reasons"`
-	Scores         eval.Scores    `json:"scores"`
-	Facts          eval.Facts     `json:"facts"`
-	Gate           eval.Gate      `json:"gate"`
-	ParseErrors    []parseError   `json:"parseErrors,omitempty"`
-	Files          []*fileSummary `json:"files"`
+	SchemaVersion  int           `json:"schemaVersion"`
+	Verdict        string        `json:"verdict"`
+	RequiresReview bool          `json:"requiresReview"`
+	Reasons        []eval.Reason `json:"reasons"`
+	Scores         eval.Scores   `json:"scores"`
+	Facts          eval.Facts    `json:"facts"`
+	Gate           eval.Gate     `json:"gate"`
+	// Contributors names the symbols behind each new score, keyed like
+	// scores (cogDelta, newFunctionComplexity, ...), largest first.
+	Contributors map[string]any `json:"contributors"`
+	ParseErrors  []parseError   `json:"parseErrors,omitempty"`
+	Files        []*fileSummary `json:"files"`
 }
 
 // parseError names a file that could not be parsed. Any entry here forces
@@ -195,6 +199,13 @@ func analyze(base, head string, gate eval.Gate, trusted bool) (report, bool, err
 	}
 	modules := symbols.ModulesTouched(changedFiles, baseSyms, headSyms)
 	scores.BreadthModules = &modules
+	contributors := map[string]any{}
+
+	pairs := symbols.Compare(baseSyms, headSyms)
+	cog := cognitive.Measure(pairs)
+	scores.CogDelta, scores.NewFunctionComplexity = &cog.Delta, &cog.NewMax
+	contributors["cogDelta"] = nonNil(cog.Deltas)
+	contributors["newFunctionComplexity"] = nonNil(cog.News)
 	facts := eval.Facts{Trusted: trusted, Unparsed: len(parseErrs) > 0}
 	d := eval.Evaluate(scores, facts, gate)
 
@@ -214,12 +225,21 @@ func analyze(base, head string, gate eval.Gate, trusted bool) (report, bool, err
 		Scores:         scores,
 		Facts:          facts,
 		Gate:           gate,
+		Contributors:   contributors,
 		ParseErrors:    parseErrs,
 	}
 	for _, fc := range res.Files {
 		rep.Files = append(rep.Files, &fileSummary{Path: fc.Path, Kind: string(fc.Kind)})
 	}
 	return rep, d.RequiresReview, nil
+}
+
+// nonNil keeps an empty contributor list as [] rather than null.
+func nonNil[T any](xs []T) []T {
+	if xs == nil {
+		return []T{}
+	}
+	return xs
 }
 
 // collectParseErrors lists the files on one side that could not be parsed,
