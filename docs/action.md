@@ -88,7 +88,7 @@ test for `== 'true'`, or use `check-conclusion == 'failure'` so that a failure
 is treated as "needs review":
 
 ```yaml
-- uses: donaldwasserman/lgtm@v1
+- uses: donaldwasserman/lgtm@v0
   id: lgtm
   with:
     base-ref: origin/${{ github.event.pull_request.base.ref }}
