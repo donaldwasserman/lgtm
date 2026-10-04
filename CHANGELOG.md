@@ -3,7 +3,7 @@
 Each version's section becomes its GitHub release notes. Versioning rules are
 in [docs/releasing.md](docs/releasing.md#version-numbers).
 
-## 1.0.0
+## 0.0.1
 
 First release.
 
