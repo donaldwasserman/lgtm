@@ -141,6 +141,14 @@ Before lgtm changes, record golden reports from the **current release** for:
 Later runs must match `edit_depth`, `new_depth`, `total_depth` and
 `breadth_files` exactly. Also pin the version used to record them.
 
+**Caveat:** the current release's call-depth search is nondeterministic
+wherever two call paths share a callee: it sometimes undercounts. It also
+crashes on mutual recursion. Record each golden report **several times**
+(say 20 runs), and keep the maximum value of each depth score. The fixed
+search always produces that maximum. Mark any scenario whose runs disagree
+as `v1-nondeterministic`, so a later mismatch there isn't read as a
+regression.
+
 ## Scenarios by measure
 
 Exact values are given where the definition settles them. Elsewhere, assert

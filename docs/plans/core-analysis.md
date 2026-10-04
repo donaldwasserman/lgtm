@@ -358,6 +358,18 @@ is why the scan is needed.
 | 27 | Edit depth stays exactly frozen, deletions included. An exempt deletion is ignored by the new measures but still counts toward edit depth. |
 | 28 | Fixed rule 4 overrides trust: a trusted author doesn't skip review of code lgtm fails to analyze. |
 
+### Implementation notes
+
+- **"Frozen" edit depth means its definition, not v1's bugs.** v1's call-depth
+  search crashed on mutual recursion and, on graphs where two call paths
+  share a callee, returned the longest chain or a shorter one depending on
+  Go's map order (measured: 2 instead of 3 in about 13% of runs on a
+  four-function example). The SCC rewrite always returns the true longest
+  chain. Edit depth can therefore differ from a v1 run, but only where v1
+  was crashing or nondeterministic.
+- **Two comparisons.** Edit depth and file breadth keep the path-based
+  differ. The new measures compare module-scoped symbols (ADR 0001).
+
 ## Notes on the source report
 
 The Gemini report ("Deterministic Evaluation of Pull Request Risk") gave us

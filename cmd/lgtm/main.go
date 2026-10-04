@@ -26,6 +26,7 @@ import (
 	"github.com/donaldwasserman/lgtm/internal/metrics"
 	"github.com/donaldwasserman/lgtm/internal/model"
 	"github.com/donaldwasserman/lgtm/internal/parse"
+	"github.com/donaldwasserman/lgtm/internal/symbols"
 )
 
 // schemaVersion is bumped whenever a field of report is renamed, removed or
@@ -187,6 +188,13 @@ func analyze(base, head string, gate eval.Gate, trusted bool) (report, bool, err
 
 	res := diff.Diff(baseFiles, headFiles)
 	scores := metrics.Compute(res)
+	baseSyms, headSyms := symbols.Extract(baseFiles), symbols.Extract(headFiles)
+	var changedFiles []string
+	for _, fc := range res.Files {
+		changedFiles = append(changedFiles, fc.Path)
+	}
+	modules := symbols.ModulesTouched(changedFiles, baseSyms, headSyms)
+	scores.BreadthModules = &modules
 	facts := eval.Facts{Trusted: trusted, Unparsed: len(parseErrs) > 0}
 	d := eval.Evaluate(scores, facts, gate)
 

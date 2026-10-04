@@ -122,3 +122,63 @@ fn d() -> i32 { "1".parse::<i32>().unwrap() + parse::<i32>("2") }
 		t.Errorf("want 2 calls to parse, got callees %v", callees)
 	}
 }
+
+// Mutual recursion once overflowed the stack: the cycle guard only tripped on
+// names whose search had finished. A cycle now contributes nothing, and every
+// member of one shares the longest chain leading out of it.
+func TestCallDepthCycles(t *testing.T) {
+	cases := []struct {
+		name  string
+		graph map[string]map[string]bool
+		want  map[string]int
+	}{
+		{"two_cycle", map[string]map[string]bool{"a": {"b": true}, "b": {"a": true}},
+			map[string]int{"a": 0, "b": 0}},
+		{"three_cycle", map[string]map[string]bool{"a": {"b": true}, "b": {"c": true}, "c": {"a": true}},
+			map[string]int{"a": 0, "b": 0, "c": 0}},
+		{"cycle_with_exit", map[string]map[string]bool{
+			"a": {"b": true}, "b": {"a": true, "c": true}, "c": {"d": true}},
+			map[string]int{"a": 2, "b": 2, "c": 1, "d": 0}},
+		{"chain_into_cycle", map[string]map[string]bool{
+			"top": {"a": true}, "a": {"b": true}, "b": {"a": true}},
+			map[string]int{"top": 1, "a": 0, "b": 0}},
+		// The old search skipped any callee it had already finished, so
+		// whether a counted b->d->e depended on map order: 2 or 3 at random.
+		{"shared_callee", map[string]map[string]bool{
+			"a": {"b": true, "d": true}, "b": {"d": true}, "d": {"e": true}},
+			map[string]int{"a": 3, "b": 2, "d": 1, "e": 0}},
+		{"diamond", map[string]map[string]bool{
+			"a": {"b": true, "c": true}, "b": {"d": true}, "c": {"d": true}, "d": {"e": true}},
+			map[string]int{"a": 3, "b": 2, "c": 2, "d": 1, "e": 0}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			for i := 0; i < 50; i++ { // map order must not matter
+				for name, want := range c.want {
+					if got := longestPath(name, c.graph); got != want {
+						t.Fatalf("longestPath(%s) = %d, want %d", name, got, want)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestScanSurvivesMutualRecursion(t *testing.T) {
+	dir := t.TempDir()
+	src := "package p\n\nfunc a(n int) int { if n == 0 { return 0 }; return b(n - 1) }\n\nfunc b(n int) int { return a(n) + leaf() }\n\nfunc leaf() int { return 1 }\n"
+	if err := os.WriteFile(filepath.Join(dir, "r.go"), []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	files, err := Scan(context.Background(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if files["r.go"] == nil || files["r.go"].Error != nil {
+		t.Fatalf("r.go not scanned cleanly: %+v", files["r.go"])
+	}
+	// a and b form a cycle whose only way out is leaf: chain length 1.
+	if got := maxCall(files["r.go"].Root); got != 1 {
+		t.Errorf("max call depth = %d, want 1", got)
+	}
+}

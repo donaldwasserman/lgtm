@@ -10,8 +10,11 @@ review of a change no caller can observe.
 
 ## Consequences
 
-- The differ pairs declarations across files within a module before it diffs
-  them; pairing base and head files by path alone is no longer enough.
+- The newer measures (cognitive complexity, significance, blast radius)
+  compare base and head symbol by symbol, pairing declarations across files
+  within a module. The original path-based differ stays as it is for edit
+  depth and file breadth, whose values are frozen: changing how it pairs
+  files would change them.
 - The same module scope is the first resolution tier when building the call
   graph for the affected set.
 - Every supported language gets real module identity at launch, including
