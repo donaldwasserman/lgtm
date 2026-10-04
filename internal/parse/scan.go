@@ -30,7 +30,7 @@ func Scan(ctx context.Context, dir string) (map[string]*model.File, error) {
 			return err
 		}
 		if d.IsDir() {
-			if skipDir(path) {
+			if SkipDir(path) {
 				return filepath.SkipDir
 			}
 			return nil
@@ -74,8 +74,8 @@ func Scan(ctx context.Context, dir string) (map[string]*model.File, error) {
 	return files, err
 }
 
-// skipDir reports whether a directory should be excluded from scanning.
-func skipDir(path string) bool {
+// SkipDir reports whether a directory should be excluded from scanning.
+func SkipDir(path string) bool {
 	base := filepath.Base(path)
 	switch base {
 	case ".git", "node_modules", "vendor", ".venv", "venv", "__pycache__",

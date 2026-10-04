@@ -22,6 +22,7 @@ import (
 	"sort"
 
 	"github.com/donaldwasserman/lgtm/eval"
+	"github.com/donaldwasserman/lgtm/internal/blast"
 	"github.com/donaldwasserman/lgtm/internal/cognitive"
 	"github.com/donaldwasserman/lgtm/internal/diff"
 	"github.com/donaldwasserman/lgtm/internal/metrics"
@@ -208,9 +209,27 @@ func analyze(base, head string, gate eval.Gate, trusted bool) (report, bool, err
 	contributors["cogDelta"] = nonNil(cog.Deltas)
 	contributors["newFunctionComplexity"] = nonNil(cog.News)
 
-	sig := significance.Measure(pairs, nil)
+	// The reference graph is built on base: new code has no callers yet.
+	graph := blast.Build(baseSyms)
+	exemption := blast.NewExemption(graph, base, head)
+	sig := significance.Measure(pairs, exemption.Exempt)
 	scores.Significance = &sig.Score
 	contributors["significance"] = sig.Contributors()
+
+	var changed []*symbols.Symbol
+	called := eval.None
+	for _, r := range sig.Rated {
+		if r.Level == eval.None {
+			continue // locals renamed: nothing a caller can observe
+		}
+		changed = append(changed, r.Symbol())
+		if len(graph.Callers(r.Symbol())) > 0 {
+			called = max(called, r.Level)
+		}
+	}
+	br := blast.Measure(graph, changed)
+	scores.BlastRadius, scores.CalledSignificance = &br.Radius, &called
+	contributors["blastRadius"] = br.Contributors
 	facts := eval.Facts{Trusted: trusted, Unparsed: len(parseErrs) > 0}
 	d := eval.Evaluate(scores, facts, gate)
 

@@ -44,7 +44,8 @@ func TestValidateRejectsZeroThresholds(t *testing.T) {
 
 func TestReasonsNameEveryRuleThatFired(t *testing.T) {
 	s := eval.Scores{EditDepth: 9, DepthTotal: 9, BreadthFiles: 8,
-		CogDelta: eval.On(6), BlastRadius: eval.On(60), Significance: eval.LevelOn(eval.High)}
+		CogDelta: eval.On(6), BlastRadius: eval.On(60), Significance: eval.LevelOn(eval.High),
+		CalledSignificance: eval.LevelOn(eval.High)}
 	d := eval.Evaluate(s, eval.Facts{Unparsed: true}, eval.DefaultGate)
 	want := []eval.Reason{eval.ReasonUnparsed, eval.ReasonEditDepth, eval.ReasonBreadthFiles,
 		eval.ReasonCogDelta, eval.ReasonCalledSignature, eval.ReasonBlastRadius}

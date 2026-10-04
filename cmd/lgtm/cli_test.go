@@ -90,7 +90,7 @@ func TestReportContract(t *testing.T) {
 	}
 	scores, _ := rep["scores"].(map[string]any)
 	for _, k := range []string{"editDepth", "newDepth", "depthTotal", "breadthFiles",
-		"breadthModules", "cogDelta", "newFunctionComplexity", "significance", "blastRadius"} {
+		"breadthModules", "cogDelta", "newFunctionComplexity", "significance", "calledSignificance", "blastRadius"} {
 		if _, ok := scores[k]; !ok {
 			t.Errorf("scores.%s missing; every measure is reported, null when unavailable", k)
 		}

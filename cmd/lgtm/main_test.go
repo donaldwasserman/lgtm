@@ -182,3 +182,82 @@ func TestCleanTreeReportsNoParseErrors(t *testing.T) {
 			rep.Facts.Unparsed, requiresReview)
 	}
 }
+
+// TestNewMeasuresEndToEnd drives the new measures through the real pipeline
+// under the default gate.
+func TestNewMeasuresEndToEnd(t *testing.T) {
+	const lib = "package lib\n\nfunc Parse(s string) int { return len(s) }\n"
+	const libWider = "package lib\n\nfunc Parse(s string, strict bool) int { return len(s) }\n"
+	const caller = "package app\n\nimport \"lib\"\n\nfunc Run() int { return lib.Parse(\"x\") }\n"
+	cases := []struct {
+		name       string
+		base, head map[string]string
+		want       bool
+		reason     eval.Reason
+	}{
+		{
+			name:   "called_exported_signature",
+			base:   map[string]string{"lib/lib.go": lib, "app/app.go": caller},
+			head:   map[string]string{"lib/lib.go": libWider, "app/app.go": caller},
+			want:   true,
+			reason: eval.ReasonCalledSignature,
+		},
+		{
+			name: "uncalled_exported_signature",
+			base: map[string]string{"lib/lib.go": lib},
+			head: map[string]string{"lib/lib.go": libWider},
+			want: false,
+		},
+		{
+			name: "dead_private_function_deleted",
+			base: map[string]string{"lib/lib.go": lib + "\nfunc unused() int { return 7 }\n"},
+			head: map[string]string{"lib/lib.go": lib},
+			want: false,
+		},
+		{
+			name: "export_removed",
+			base: map[string]string{"lib/lib.go": lib},
+			head: map[string]string{"lib/lib.go": "package lib\n\nfunc parse(s string) int { return len(s) }\n"},
+			want: true, reason: eval.ReasonSignificance,
+		},
+		{
+			name: "existing_function_much_harder_to_read",
+			base: map[string]string{"a.go": "package a\n\nfunc F(xs []int) int { return len(xs) }\n"},
+			head: map[string]string{"a.go": `package a
+
+func F(xs []int) int {
+	n := 0
+	for _, x := range xs {
+		if x > 0 && x < 10 || x == 99 {
+			for x > 0 {
+				x--
+			}
+		}
+	}
+	return n
+}
+`},
+			want: true, reason: eval.ReasonCogDelta,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			rep, got, err := analyze(writeTree(t, "base", c.base), writeTree(t, "head", c.head), eval.DefaultGate, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != c.want {
+				t.Fatalf("requiresReview = %v, want %v; reasons %v, scores %+v", got, c.want, rep.Reasons, rep.Scores)
+			}
+			if c.reason != "" {
+				found := false
+				for _, r := range rep.Reasons {
+					found = found || r == c.reason
+				}
+				if !found {
+					t.Errorf("reasons = %v, want %s among them", rep.Reasons, c.reason)
+				}
+			}
+		})
+	}
+}

@@ -39,6 +39,10 @@ type Scores struct {
 	// Significance is the highest significance level among changes to
 	// existing symbols.
 	Significance *Level `json:"significance"`
+	// CalledSignificance is the highest significance level among changed
+	// existing symbols that something calls. The compound rule reads it, so
+	// an exported signature change gates only when that symbol has callers.
+	CalledSignificance *Level `json:"calledSignificance"`
 	// BlastRadius is the number of symbols that call a changed existing
 	// symbol, within three hops, excluding the changed symbols themselves.
 	BlastRadius *int `json:"blastRadius"`
@@ -126,8 +130,9 @@ const (
 	ReasonCogDelta       Reason = "cog-delta"
 	ReasonNewFunction    Reason = "new-function-complexity"
 	ReasonSignificance   Reason = "significance"
-	// ReasonCalledSignature is the compound significance rule: an exported
-	// signature change (high) to a symbol something calls.
+	// ReasonCalledSignature is the compound significance rule: a change of
+	// at least high significance (an exported signature) to a symbol
+	// something calls.
 	ReasonCalledSignature Reason = "called-exported-signature"
 	ReasonBlastRadius     Reason = "blast-radius"
 )
@@ -178,7 +183,7 @@ func Evaluate(s Scores, f Facts, g Gate) Decision {
 		if g.ThetaSignificance != nil && s.Significance != nil {
 			if *s.Significance >= *g.ThetaSignificance {
 				rs = append(rs, ReasonSignificance)
-			} else if *s.Significance >= High && s.BlastRadius != nil && *s.BlastRadius > 0 {
+			} else if s.CalledSignificance != nil && *s.CalledSignificance >= High {
 				rs = append(rs, ReasonCalledSignature)
 			}
 		}

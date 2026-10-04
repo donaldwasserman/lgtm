@@ -31,6 +31,10 @@ sig Scores {
   cog_delta: lone Int,
   new_function_complexity: lone Int,
   significance: lone Int,
+  -- The highest significance among changed symbols that something calls.
+  -- It is what the compound rule reads: an exported signature change gates
+  -- only when that symbol has callers, not when some other one does.
+  called_significance: lone Int,
   blast_radius: lone Int,
   -- Some existing symbol changed (an exempt deletion does not count).
   touches_existing: one BOOL,
@@ -61,6 +65,7 @@ fact Ranges {
     all i: s.cog_delta | int[i] >= 0
     all i: s.new_function_complexity | int[i] >= 0
     all i: s.significance | int[i] >= 0 and int[i] <= 4
+    all i: s.called_significance | int[i] >= 0 and int[i] <= 4
     all i: s.blast_radius | int[i] >= 0
   }
   -- "Off" is the only way to disable a threshold; the CLI rejects 0, which
@@ -79,7 +84,21 @@ fact NewMeasuresLookAtExistingSymbols {
   all s: Scores | s.touches_existing = FALSE implies {
     all i: s.cog_delta | int[i] = 0
     all i: s.significance | int[i] = 0
+    all i: s.called_significance | int[i] = 0
     all i: s.blast_radius | int[i] = 0
+  }
+}
+
+-- Called significance is significance restricted to symbols with callers:
+-- never above significance, and nothing when no changed symbol has a caller
+-- (blast radius 0). Both come from the same call graph, so it is available
+-- exactly when blast radius is.
+fact CalledSignificanceIsARestriction {
+  all s: Scores {
+    some s.called_significance iff (some s.significance and some s.blast_radius)
+    all c: s.called_significance | lte[int[c], int[s.significance]]
+    (some s.blast_radius and int[s.blast_radius] = 0) implies
+      (all c: s.called_significance | int[c] = 0)
   }
 }
 
@@ -100,13 +119,12 @@ pred v1Fires[s: Scores, g: Gate] {
 }
 
 -- Significance, including the compound rule: an exported signature change
--- (high) gates when something calls it, whenever the significance threshold
--- is on at all.
+-- (high) to a symbol something calls gates, whenever the significance
+-- threshold is on at all.
 pred significanceFires[s: Scores, g: Gate] {
   some g.theta_significance and some s.significance and
   (gte[int[s.significance], int[g.theta_significance]] or
-   (gte[int[s.significance], HIGH] and some s.blast_radius and
-    gt[int[s.blast_radius], 0]))
+   (some s.called_significance and gte[int[s.called_significance], HIGH]))
 }
 
 pred anyThresholdFires[s: Scores, g: Gate] {

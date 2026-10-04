@@ -47,6 +47,7 @@ assert MonotoneInScores {
      atLeast[a.cog_delta, b.cog_delta] and
      atLeast[a.new_function_complexity, b.new_function_complexity] and
      atLeast[a.significance, b.significance] and
+     atLeast[a.called_significance, b.called_significance] and
      atLeast[a.blast_radius, b.blast_radius] and
      requiresReview[b, g])
     implies requiresReview[a, g]
@@ -103,7 +104,7 @@ assert ConservativeExtension {
 assert UnavailableFallsBackToV1 {
   all s: Scores, g: Gate |
     (no s.breadth_modules + s.cog_delta + s.new_function_complexity +
-        s.significance + s.blast_radius)
+        s.significance + s.called_significance + s.blast_radius)
     implies (requiresReview[s, g] iff
               (unmeasured[s] or (s.trusted = FALSE and v1Fires[s, g])))
 }

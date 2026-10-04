@@ -96,13 +96,18 @@ generate-instances: $(JAR)
 	@find $(RUNTIME) -name '*.xml' | sort
 
 # Parse the instance XML with the Go generator and emit table-driven tests:
-# the gate's examples, and every significance level the model assigns.
+# the gate's examples, every significance level the model assigns, and the
+# affected sets and exemptions of small reference graphs.
 generate: generate-instances
 	$(GO) run ./cmd/genalloy -als $(ALLOY_DIR)/gate_scenarios.als -xml $(RUNTIME) -out eval/evaluator_alloy_test.go
 	@rm -rf $(ALLOY_DIR)/runtime-sig
 	cd $(ALLOY_DIR) && \
 	java -Djava.awt.headless=true -jar alloy.jar exec -q -f -r 0 --type xml -o runtime-sig significance_fixtures.als
 	$(GO) run ./cmd/genalloy -mode significance -xml $(ALLOY_DIR)/runtime-sig -out internal/significance/levels_alloy_test.go
+	@rm -rf $(ALLOY_DIR)/runtime-blast
+	cd $(ALLOY_DIR) && \
+	java -Djava.awt.headless=true -jar alloy.jar exec -q -f -c '*' -r 150 --type xml -o runtime-blast blast_fixtures.als
+	$(GO) run ./cmd/genalloy -mode blast -xml $(ALLOY_DIR)/runtime-blast -out internal/blast/affected_alloy_test.go
 
 # Regenerate the Alloy-driven test from the spec and run the full suite.
 verify: generate build
@@ -149,4 +154,4 @@ all: check scenarios check-measures check-action scenarios-action generate build
 	@echo "=== All checks complete ==="
 
 clean:
-	rm -rf bin $(OUTPUT) $(RUNTIME) $(ALLOY_DIR)/runtime-sig
+	rm -rf bin $(OUTPUT) $(RUNTIME) $(ALLOY_DIR)/runtime-sig $(ALLOY_DIR)/runtime-blast
