@@ -80,7 +80,7 @@ jobs:
           BASE_REF: ${{ github.event.pull_request.base.ref }}
         run: git fetch --no-tags origin "$BASE_REF"
 
-      - uses: donaldwasserman/lgtm@v1
+      - uses: donaldwasserman/lgtm@v0
         with:
           base-ref: origin/${{ github.event.pull_request.base.ref }}
 ```
@@ -116,11 +116,11 @@ target branch first.
 ```bash
 # Docker (Linux, amd64 and arm64). Mount the checkout read-only; no network needed.
 docker run --rm --network none -v "$PWD:/repo:ro" \
-  ghcr.io/donaldwasserman/lgtm:1 --repo /repo --base-ref origin/main
+  ghcr.io/donaldwasserman/lgtm:0 --repo /repo --base-ref origin/main
 
 # Prebuilt binary (Linux and macOS): pick lgtm_<version>_<os>_<arch>.tar.gz
 # from https://github.com/donaldwasserman/lgtm/releases, e.g.
-curl -fsSL https://github.com/donaldwasserman/lgtm/releases/download/v1.0.0/lgtm_1.0.0_linux_amd64.tar.gz | tar -xz lgtm
+curl -fsSL https://github.com/donaldwasserman/lgtm/releases/download/v0.0.1/lgtm_0.0.1_linux_amd64.tar.gz | tar -xz lgtm
 
 # From source (needs Go 1.25+ and a C compiler)
 go install github.com/donaldwasserman/lgtm/cmd/lgtm@latest
@@ -206,7 +206,7 @@ up to the caller. For example:
 git fetch --no-tags origin main
 docker run --rm --network none --user "$(id -u):$(id -g)" \
   -v "$PWD:/repo:ro" -v "$PWD/out:/out" \
-  ghcr.io/donaldwasserman/lgtm:1 \
+  ghcr.io/donaldwasserman/lgtm:0 \
   --repo /repo --base-ref origin/main --output /out/lgtm.json --exit-zero
 jq -r .verdict out/lgtm.json
 ```

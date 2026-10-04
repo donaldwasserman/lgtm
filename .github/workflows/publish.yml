@@ -32,6 +32,16 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
+      # Same check as release.yml: a mistyped tag must not publish an image
+      # that has no matching release.
+      - name: Tag matches VERSION
+        if: github.ref_type == 'tag'
+        run: |
+          want="v$(tr -d '[:space:]' < VERSION)"
+          if [ "$GITHUB_REF_NAME" != "$want" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match VERSION ($want). Update VERSION, then re-tag."
+            exit 1
+          fi
       - name: Name the platform
         run: echo "PLATFORM_PAIR=${PLATFORM//\//-}" >> "$GITHUB_ENV"
         env:
