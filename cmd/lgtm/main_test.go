@@ -15,7 +15,7 @@ func TestAnalyzeRequiresReview(t *testing.T) {
 		name   string
 		base   map[string]string
 		head   map[string]string
-		thr    eval.Thresholds
+		thr    eval.Gate
 		expect bool
 	}{
 		{
@@ -24,7 +24,7 @@ func TestAnalyzeRequiresReview(t *testing.T) {
 			head: map[string]string{"a.go": "package main\nfunc helper()int{return 1}\nfunc f(){_ = helper()}\n"},
 			// The added helper/body produces structural+call depth in a single
 			// file; assert decision true only when the change is non-trivial.
-			thr:    eval.DefaultThresholds,
+			thr:    eval.DefaultGate,
 			expect: false, // single file, low depth/breadth
 		},
 		{
@@ -39,7 +39,7 @@ func TestAnalyzeRequiresReview(t *testing.T) {
 				return m
 			}(),
 			// 8 new files => breadth 8 >= thetaBreadth 6 and depth>epsilon
-			thr:    eval.DefaultThresholds,
+			thr:    eval.DefaultGate,
 			expect: true,
 		},
 		{
@@ -49,7 +49,7 @@ func TestAnalyzeRequiresReview(t *testing.T) {
 			name:   "trivial_edit_in_wide_repo",
 			base:   wideRepo("hi"),
 			head:   wideRepo("hello"),
-			thr:    eval.DefaultThresholds,
+			thr:    eval.DefaultGate,
 			expect: false,
 		},
 	}
@@ -78,14 +78,14 @@ func TestTrustExemptsReview(t *testing.T) {
 	headFiles["f.go"] = "package p\nfunc helper(){ _ = Z() }\n"
 	head := writeTree(t, "head", headFiles)
 
-	rep, noExempt, err := analyze(base, head, eval.DefaultThresholds, false)
+	rep, noExempt, err := analyze(base, head, eval.DefaultGate, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !noExempt {
 		t.Fatal("expected review required without exemption")
 	}
-	rep2, exempt, err := analyze(base, head, eval.DefaultThresholds, true)
+	rep2, exempt, err := analyze(base, head, eval.DefaultGate, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,15 +139,15 @@ func TestUnparseableFileForcesReview(t *testing.T) {
 		"x.go": "package p\n\nfunc A() int { return \n((( \n",
 	})
 
-	rep, requiresReview, err := analyze(base, head, eval.DefaultThresholds, false)
+	rep, requiresReview, err := analyze(base, head, eval.DefaultGate, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !requiresReview {
 		t.Fatal("expected review to be required for an unparseable file")
 	}
-	if !rep.Metrics.Unparsed {
-		t.Error("Metrics.Unparsed = false, want true")
+	if !rep.Facts.Unparsed {
+		t.Error("Facts.Unparsed = false, want true")
 	}
 	if len(rep.ParseErrors) != 1 ||
 		rep.ParseErrors[0].Path != "x.go" || rep.ParseErrors[0].Side != "head" {
@@ -155,7 +155,7 @@ func TestUnparseableFileForcesReview(t *testing.T) {
 	}
 
 	// The top-20% exemption must not rescue a change that could not be measured.
-	_, exempt, err := analyze(base, head, eval.DefaultThresholds, true)
+	_, exempt, err := analyze(base, head, eval.DefaultGate, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,15 +170,94 @@ func TestCleanTreeReportsNoParseErrors(t *testing.T) {
 	base := writeTree(t, "base", map[string]string{"x.go": "package p\n\nfunc A() int { return 1 }\n"})
 	head := writeTree(t, "head", map[string]string{"x.go": "package p\n\nfunc A() int { return 2 }\n"})
 
-	rep, requiresReview, err := analyze(base, head, eval.DefaultThresholds, false)
+	rep, requiresReview, err := analyze(base, head, eval.DefaultGate, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(rep.ParseErrors) != 0 {
 		t.Fatalf("ParseErrors = %+v, want none", rep.ParseErrors)
 	}
-	if rep.Metrics.Unparsed || requiresReview {
+	if rep.Facts.Unparsed || requiresReview {
 		t.Fatalf("clean one-line edit: Unparsed=%v requiresReview=%v, want false/false",
-			rep.Metrics.Unparsed, requiresReview)
+			rep.Facts.Unparsed, requiresReview)
+	}
+}
+
+// TestNewMeasuresEndToEnd drives the new measures through the real pipeline
+// under the default gate.
+func TestNewMeasuresEndToEnd(t *testing.T) {
+	const lib = "package lib\n\nfunc Parse(s string) int { return len(s) }\n"
+	const libWider = "package lib\n\nfunc Parse(s string, strict bool) int { return len(s) }\n"
+	const caller = "package app\n\nimport \"lib\"\n\nfunc Run() int { return lib.Parse(\"x\") }\n"
+	cases := []struct {
+		name       string
+		base, head map[string]string
+		want       bool
+		reason     eval.Reason
+	}{
+		{
+			name:   "called_exported_signature",
+			base:   map[string]string{"lib/lib.go": lib, "app/app.go": caller},
+			head:   map[string]string{"lib/lib.go": libWider, "app/app.go": caller},
+			want:   true,
+			reason: eval.ReasonCalledSignature,
+		},
+		{
+			name: "uncalled_exported_signature",
+			base: map[string]string{"lib/lib.go": lib},
+			head: map[string]string{"lib/lib.go": libWider},
+			want: false,
+		},
+		{
+			name: "dead_private_function_deleted",
+			base: map[string]string{"lib/lib.go": lib + "\nfunc unused() int { return 7 }\n"},
+			head: map[string]string{"lib/lib.go": lib},
+			want: false,
+		},
+		{
+			name: "export_removed",
+			base: map[string]string{"lib/lib.go": lib},
+			head: map[string]string{"lib/lib.go": "package lib\n\nfunc parse(s string) int { return len(s) }\n"},
+			want: true, reason: eval.ReasonSignificance,
+		},
+		{
+			name: "existing_function_much_harder_to_read",
+			base: map[string]string{"a.go": "package a\n\nfunc F(xs []int) int { return len(xs) }\n"},
+			head: map[string]string{"a.go": `package a
+
+func F(xs []int) int {
+	n := 0
+	for _, x := range xs {
+		if x > 0 && x < 10 || x == 99 {
+			for x > 0 {
+				x--
+			}
+		}
+	}
+	return n
+}
+`},
+			want: true, reason: eval.ReasonCogDelta,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			rep, got, err := analyze(writeTree(t, "base", c.base), writeTree(t, "head", c.head), eval.DefaultGate, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != c.want {
+				t.Fatalf("requiresReview = %v, want %v; reasons %v, scores %+v", got, c.want, rep.Reasons, rep.Scores)
+			}
+			if c.reason != "" {
+				found := false
+				for _, r := range rep.Reasons {
+					found = found || r == c.reason
+				}
+				if !found {
+					t.Errorf("reasons = %v, want %s among them", rep.Reasons, c.reason)
+				}
+			}
+		})
 	}
 }

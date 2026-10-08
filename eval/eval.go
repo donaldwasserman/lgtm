@@ -1,58 +1,200 @@
-// Package eval holds the PR-review complexity decision logic.
+// Package eval holds the gate: the rule that turns a pull request's scores
+// into "needs review" or not.
 //
-// RequiresReview implements the formal spec in alloy/pr_review.als and is
-// tested against evaluator_alloy_test.go, which is generated from Alloy
-// scenario instances by cmd/genalloy (see `make generate`).
+// Evaluate implements requiresReview in alloy/gate.als and is tested against
+// evaluator_alloy_test.go, which is generated from the examples in
+// alloy/gate_scenarios.als by cmd/genalloy (see `make generate`).
 package eval
 
-// Metrics summarizes the AST-graph complexity of a pull request's changes.
-type Metrics struct {
-	// The JSON tags pin the report's wire format, which consumers (including
-	// the check-run summary in action.yml) read by these exact names. They
-	// restate what the field names already produced, so renaming a field can
-	// no longer change the output by accident.
-	DepthMod int `json:"DepthMod"` // impact/call depth of modified/deleted existing AST nodes
-	// DepthNew is the nesting/call depth of newly added AST nodes. It is
-	// deliberately not consulted by RequiresReview: deep new code on its own
-	// does not force review (see NewCodeExemption in alloy/properties.als).
-	DepthNew   int  `json:"DepthNew"`
-	Breadth    int  `json:"Breadth"`    // distinct files touched by the change
-	DepthTotal int  `json:"DepthTotal"` // overall semantic and dependency depth across all changes
-	Trusted    bool `json:"Trusted"`    // submitter is exempt from review; how trust is decided is the caller's policy
-	Unparsed   bool `json:"Unparsed"`   // a file on either side could not be parsed
+import (
+	"errors"
+	"fmt"
+)
+
+// Scores holds one score per measure for one pull request, each in that
+// measure's own unit. A nil score is unavailable: the measure is not
+// implemented for the change's languages. An unavailable score never forces
+// review.
+//
+// The JSON names are the report's wire format (schemaVersion 2), which the
+// action and users' own workflow steps read by these exact names.
+type Scores struct {
+	// EditDepth is how deep the deepest change to existing code reaches:
+	// nesting depth plus intra-file call depth. Frozen at its v1 definition.
+	EditDepth int `json:"editDepth"`
+	// NewDepth is the same measure for inserted code. Reported, never gated.
+	NewDepth int `json:"newDepth"`
+	// DepthTotal is the edit depth across every change, new code included.
+	DepthTotal int `json:"depthTotal"`
+	// BreadthFiles is the number of files the change touches.
+	BreadthFiles int `json:"breadthFiles"`
+	// BreadthModules is the number of language modules the change touches.
+	BreadthModules *int `json:"breadthModules"`
+	// CogDelta is the largest increase in cognitive complexity among
+	// functions that exist on both sides.
+	CogDelta *int `json:"cogDelta"`
+	// NewFunctionComplexity is the largest cognitive complexity among new
+	// functions.
+	NewFunctionComplexity *int `json:"newFunctionComplexity"`
+	// Significance is the highest significance level among changes to
+	// existing symbols.
+	Significance *Level `json:"significance"`
+	// CalledSignificance is the highest significance level among changed
+	// existing symbols that something calls. The compound rule reads it, so
+	// an exported signature change gates only when that symbol has callers.
+	CalledSignificance *Level `json:"calledSignificance"`
+	// BlastRadius is the number of symbols that call a changed existing
+	// symbol, within three hops, excluding the changed symbols themselves.
+	BlastRadius *int `json:"blastRadius"`
 }
 
-// Thresholds holds the repository baseline thresholds.
-type Thresholds struct {
-	ThetaDepth     int // high depth threshold
-	ThetaBreadth   int // high breadth threshold
-	EpsilonTrivial int // upper bound below which depth is considered trivial
+// Facts are the inputs to the fixed rules. They are not scores: no
+// threshold applies to them.
+type Facts struct {
+	// Trusted exempts the change from every threshold. Which authors are
+	// trusted is the caller's policy, outside this decision.
+	Trusted bool `json:"trusted"`
+	// Unparsed: some file on either side could not be fully parsed.
+	Unparsed bool `json:"unparsed"`
+	// AnalysisFailed: a measure supports a file's language but failed to
+	// analyze it.
+	AnalysisFailed bool `json:"analysisFailed"`
 }
 
-// DefaultThresholds mirrors alloy/scenarios.als (7, 6, 1).
-var DefaultThresholds = Thresholds{ThetaDepth: 7, ThetaBreadth: 6, EpsilonTrivial: 1}
+// Gate is one team's configuration: one threshold per measure. A nil
+// threshold is switched off. Thresholds are never zero; Validate rejects it.
+type Gate struct {
+	ThetaDepth   *int `json:"thetaDepth"`
+	ThetaBreadth *int `json:"thetaBreadth"`
+	// EpsilonTrivial: the files threshold fires only when DepthTotal is above
+	// this, so a wide but shallow change (a rename) passes.
+	EpsilonTrivial    int    `json:"epsilonTrivial"`
+	ThetaModules      *int   `json:"thetaModules"`
+	ThetaCog          *int   `json:"thetaCog"`
+	ThetaNewFunction  *int   `json:"thetaNewFunction"`
+	ThetaSignificance *Level `json:"thetaSignificance"`
+	ThetaBlast        *int   `json:"thetaBlast"`
+}
 
-// RequiresReview evaluates whether a PR requires review from its AST-graph
-// complexity metrics (see alloy/pr_review.als).
-//
-// An unparseable tree overrides everything, the trusted-contributor exemption
-// included: with no reliable metrics the gate must not wave the change
-// through. Otherwise a trusted contributor is exempt.
-//
-// Trusted is an opaque input: which contributors are trusted is a policy the
-// caller resolves, deliberately outside this decision and outside the formal
-// model.
-//
-//	RequiresReview = Unparsed || (!Trusted && (DepthMod >= ThetaDepth ||
-//	                 (Breadth >= ThetaBreadth && DepthTotal > EpsilonTrivial)))
-func RequiresReview(m Metrics, t Thresholds) bool {
-	if m.Unparsed {
-		return true
+// On returns a threshold that is switched on at v.
+func On(v int) *int { return &v }
+
+// LevelOn returns a significance threshold that is switched on at l.
+func LevelOn(l Level) *Level { return &l }
+
+// DefaultGate mirrors `defaults` in alloy/gate_scenarios.als.
+var DefaultGate = Gate{
+	ThetaDepth:        On(7),
+	ThetaBreadth:      On(6),
+	EpsilonTrivial:    1,
+	ThetaModules:      nil,
+	ThetaCog:          On(5),
+	ThetaNewFunction:  On(25),
+	ThetaSignificance: LevelOn(Crucial),
+	ThetaBlast:        On(50),
+}
+
+// Validate rejects thresholds of zero or below. A zero threshold would fire
+// on every change, pure additions included; "off" is the way to disable one.
+func (g Gate) Validate() error {
+	var errs []error
+	check := func(name string, t *int) {
+		if t != nil && *t < 1 {
+			errs = append(errs, fmt.Errorf("%s must be at least 1, or off (got %d)", name, *t))
+		}
 	}
-	if m.Trusted {
-		return false
+	check("theta-depth", g.ThetaDepth)
+	check("theta-breadth", g.ThetaBreadth)
+	check("theta-modules", g.ThetaModules)
+	check("theta-cog", g.ThetaCog)
+	check("theta-new-function", g.ThetaNewFunction)
+	check("theta-blast", g.ThetaBlast)
+	if t := g.ThetaSignificance; t != nil && (*t < Low || *t > Crucial) {
+		errs = append(errs, fmt.Errorf("theta-significance must be low..crucial, or off"))
 	}
-	highDepthExisting := m.DepthMod >= t.ThetaDepth
-	broadAndNontrivial := m.Breadth >= t.ThetaBreadth && m.DepthTotal > t.EpsilonTrivial
-	return highDepthExisting || broadAndNontrivial
+	if g.EpsilonTrivial < 0 {
+		errs = append(errs, fmt.Errorf("epsilon-trivial must not be negative (got %d)", g.EpsilonTrivial))
+	}
+	return errors.Join(errs...)
+}
+
+// Reason names one rule that made review required.
+type Reason string
+
+const (
+	ReasonUnparsed       Reason = "unparsed"
+	ReasonAnalysisFailed Reason = "analysis-failed"
+	ReasonEditDepth      Reason = "edit-depth"
+	ReasonBreadthFiles   Reason = "breadth-files"
+	ReasonBreadthModules Reason = "breadth-modules"
+	ReasonCogDelta       Reason = "cog-delta"
+	ReasonNewFunction    Reason = "new-function-complexity"
+	ReasonSignificance   Reason = "significance"
+	// ReasonCalledSignature is the compound significance rule: a change of
+	// at least high significance (an exported signature) to a symbol
+	// something calls.
+	ReasonCalledSignature Reason = "called-exported-signature"
+	ReasonBlastRadius     Reason = "blast-radius"
+)
+
+// Decision is the gate's answer and every rule that contributed to it.
+type Decision struct {
+	RequiresReview bool     `json:"requiresReview"`
+	Reasons        []Reason `json:"reasons"`
+}
+
+// reaches reports whether an available score meets a threshold that is on.
+func reaches(score, theta *int) bool {
+	return score != nil && theta != nil && *score >= *theta
+}
+
+// Evaluate applies the gate (alloy/gate.als):
+//
+//	requiresReview = unparsed || analysisFailed ||
+//	                 (!trusted && some threshold fires)
+//
+// The fixed rules - unparsed, analysis failed - hold under every
+// configuration and override trust. Otherwise a trusted author is exempt from
+// every threshold.
+func Evaluate(s Scores, f Facts, g Gate) Decision {
+	var rs []Reason
+	if f.Unparsed {
+		rs = append(rs, ReasonUnparsed)
+	}
+	if f.AnalysisFailed {
+		rs = append(rs, ReasonAnalysisFailed)
+	}
+	if !f.Trusted {
+		if reaches(&s.EditDepth, g.ThetaDepth) {
+			rs = append(rs, ReasonEditDepth)
+		}
+		if reaches(&s.BreadthFiles, g.ThetaBreadth) && s.DepthTotal > g.EpsilonTrivial {
+			rs = append(rs, ReasonBreadthFiles)
+		}
+		if reaches(s.BreadthModules, g.ThetaModules) {
+			rs = append(rs, ReasonBreadthModules)
+		}
+		if reaches(s.CogDelta, g.ThetaCog) {
+			rs = append(rs, ReasonCogDelta)
+		}
+		if reaches(s.NewFunctionComplexity, g.ThetaNewFunction) {
+			rs = append(rs, ReasonNewFunction)
+		}
+		if g.ThetaSignificance != nil && s.Significance != nil {
+			if *s.Significance >= *g.ThetaSignificance {
+				rs = append(rs, ReasonSignificance)
+			} else if s.CalledSignificance != nil && *s.CalledSignificance >= High {
+				rs = append(rs, ReasonCalledSignature)
+			}
+		}
+		if reaches(s.BlastRadius, g.ThetaBlast) {
+			rs = append(rs, ReasonBlastRadius)
+		}
+	}
+	return Decision{RequiresReview: len(rs) > 0, Reasons: rs}
+}
+
+// RequiresReview is Evaluate's verdict alone.
+func RequiresReview(s Scores, f Facts, g Gate) bool {
+	return Evaluate(s, f, g).RequiresReview
 }

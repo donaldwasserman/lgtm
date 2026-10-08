@@ -50,17 +50,44 @@ inputs:
     required: false
     default: ''
   theta-depth:
-    description: 'High depth threshold (default 7).'
+    description: 'Edit depth at which review is required, or "off".'
     required: false
     default: '7'
   theta-breadth:
-    description: 'High breadth threshold (default 6).'
+    description: >-
+      Number of files at which review is required (only when total depth is
+      above epsilon-trivial), or "off".
     required: false
     default: '6'
   epsilon-trivial:
-    description: 'Trivial-depth upper bound (default 1).'
+    description: 'Total depth at or below which a wide change counts as trivial.'
     required: false
     default: '1'
+  theta-modules:
+    description: 'Number of language modules at which review is required, or "off".'
+    required: false
+    default: 'off'
+  theta-cog:
+    description: >-
+      Increase in one existing function's cognitive complexity at which
+      review is required, or "off".
+    required: false
+    default: '5'
+  theta-new-function:
+    description: 'Cognitive complexity of one new function at which review is required, or "off".'
+    required: false
+    default: '25'
+  theta-significance:
+    description: >-
+      Significance level (low, medium, high, crucial) at which review is
+      required, or "off". While on, an exported signature change to a symbol
+      that something calls also requires review.
+    required: false
+    default: 'crucial'
+  theta-blast:
+    description: 'Blast radius (callers within 3 hops of changed symbols) at which review is required, or "off".'
+    required: false
+    default: '50'
   trust-mode:
     description: >-
       How the trusted-contributor exemption is decided: "none" (nobody is
@@ -399,6 +426,11 @@ runs:
         LGTM_THETA_DEPTH: ${{ inputs.theta-depth }}
         LGTM_THETA_BREADTH: ${{ inputs.theta-breadth }}
         LGTM_EPSILON_TRIVIAL: ${{ inputs.epsilon-trivial }}
+        LGTM_THETA_MODULES: ${{ inputs.theta-modules }}
+        LGTM_THETA_COG: ${{ inputs.theta-cog }}
+        LGTM_THETA_NEW_FUNCTION: ${{ inputs.theta-new-function }}
+        LGTM_THETA_SIGNIFICANCE: ${{ inputs.theta-significance }}
+        LGTM_THETA_BLAST: ${{ inputs.theta-blast }}
         LGTM_TRUSTED_INPUT: ${{ steps.trust.outputs.trusted == 'true' }}
       run: |
         set -uo pipefail
@@ -430,6 +462,11 @@ runs:
             --theta-depth "$LGTM_THETA_DEPTH" \
             --theta-breadth "$LGTM_THETA_BREADTH" \
             --epsilon-trivial "$LGTM_EPSILON_TRIVIAL" \
+            --theta-modules "$LGTM_THETA_MODULES" \
+            --theta-cog "$LGTM_THETA_COG" \
+            --theta-new-function "$LGTM_THETA_NEW_FUNCTION" \
+            --theta-significance "$LGTM_THETA_SIGNIFICANCE" \
+            --theta-blast "$LGTM_THETA_BLAST" \
             --trusted="$LGTM_TRUSTED_INPUT" && code=0 || code=$?
         fi
 
@@ -600,16 +637,31 @@ runs:
 
         if jq -e . "$report" >/dev/null 2>&1; then
           jq -r '
+            def th: if . == null then "off" else tostring end;
+            def sc: if . == null then "unavailable" else tostring end;
+            def fired($r): if (.reasons // [] | index($r)) then "**yes**" else "" end;
             "",
-            "| Metric | Value | Threshold |",
-            "| --- | --- | --- |",
-            "| Depth (modified) | \(.metrics.DepthMod) | θ_depth \(.thresholds.ThetaDepth) |",
-            "| Breadth | \(.metrics.Breadth) | θ_breadth \(.thresholds.ThetaBreadth) |",
-            "| Depth (total) | \(.metrics.DepthTotal) | ε_trivial \(.thresholds.EpsilonTrivial) |",
-            "| Depth (new code) | \(.metrics.DepthNew) | not consulted |",
-            "| Trusted contributor | \(.metrics.Trusted) | exempts review |",
-            "| Unparsed files | \(.metrics.Unparsed) | forces review |",
+            "| Measure | Score | Threshold | Requires review |",
+            "| --- | --- | --- | --- |",
+            "| Edit depth | \(.scores.editDepth) | \(.gate.thetaDepth | th) | \(fired("edit-depth")) |",
+            "| Files touched | \(.scores.breadthFiles) | \(.gate.thetaBreadth | th), when total depth is over \(.gate.epsilonTrivial) (here \(.scores.depthTotal)) | \(fired("breadth-files")) |",
+            "| Modules touched | \(.scores.breadthModules | sc) | \(.gate.thetaModules | th) | \(fired("breadth-modules")) |",
+            "| Cognitive complexity increase | \(.scores.cogDelta | sc) | \(.gate.thetaCog | th) | \(fired("cog-delta")) |",
+            "| New-function complexity | \(.scores.newFunctionComplexity | sc) | \(.gate.thetaNewFunction | th) | \(fired("new-function-complexity")) |",
+            "| Significance | \(.scores.significance | sc) | \(.gate.thetaSignificance | th) | \(fired("significance")) |",
+            "| Significance of changes with callers | \(.scores.calledSignificance | sc) | high, while significance is on | \(fired("called-exported-signature")) |",
+            "| Blast radius | \(.scores.blastRadius | sc) | \(.gate.thetaBlast | th) | \(fired("blast-radius")) |",
+            "| New-code depth | \(.scores.newDepth) | never gated | |",
             "",
+            "Trusted contributor: \(.facts.trusted) (exempts every threshold). Unparsed files: \(.facts.unparsed). Analysis failed: \(.facts.analysisFailed). Either of the last two always requires review.",
+            "",
+            ( [ .contributors // {} | to_entries[] | select(.value | length > 0) ] as $c
+              | if ($c | length) > 0 then
+                  "**What drove the scores**",
+                  "",
+                  ( $c[] | "- `\(.key)`: " + ( .value | map("`\(.symbol)` (\(.value // .level))") | join(", ") ) ),
+                  ""
+                else empty end ),
             "\(.files | length) file(s) changed."
           ' "$report" >> "$summary"
 

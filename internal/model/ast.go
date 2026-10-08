@@ -9,6 +9,7 @@ import "strconv"
 // are ignored) to reduce noise when aligning base versus head trees.
 type Node struct {
 	Type     string  `json:"type"`               // tree-sitter node type (e.g. "function_definition")
+	Field    string  `json:"field,omitempty"`    // field this node fills in its parent (e.g. "parameters"), if any
 	Name     string  `json:"name,omitempty"`     // extracted identifier of a definition, if any
 	Callee   string  `json:"callee,omitempty"`   // callee name for a call node, if any
 	Text     string  `json:"text,omitempty"`     // source text of the node (for leaf equivalence)

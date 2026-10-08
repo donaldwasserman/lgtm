@@ -11,7 +11,7 @@ BASE_REF ?= origin/main
 LGTM_VERSION ?= $(shell git describe --tags --exact-match 2>/dev/null || echo "$$(cat VERSION)-dev+$$(git rev-parse --short HEAD 2>/dev/null)")
 LDFLAGS = -X main.version=$(LGTM_VERSION)
 
-.PHONY: setup check scenarios check-action scenarios-action all verify generate generate-instances build test test-action docker-build docker-test docker-run clean
+.PHONY: setup check scenarios check-measures check-action scenarios-action all verify generate generate-instances build test test-action docker-build docker-test docker-run clean
 
 $(JAR):
 	@echo "Downloading Alloy $(ALLOY_VERSION)..."
@@ -25,26 +25,42 @@ setup: $(JAR)
 	@echo "Alloy JAR: $(JAR)"
 
 check: $(JAR)
-	@echo "=== Property checks ==="
+	@echo "=== Gate property checks ==="
 	@mkdir -p $(OUTPUT)
 	@java -Djava.awt.headless=true -jar $(JAR) exec -f -o $(OUTPUT)/properties \
-		$(ALLOY_DIR)/properties.als 2>&1 \
+		$(ALLOY_DIR)/gate_properties.als 2>&1 \
 		| tee $(OUTPUT)/check.log
-	@# Exit non-zero if any check reports SAT (counterexample found)
-	@! grep -qE '^[0-9]+\. check .*  +1/' $(OUTPUT)/check.log \
+	@# "UNSAT" is the passing result for a check; a bare "SAT" is a counterexample.
+	@! grep -qE '^[0-9]+\. check .* SAT$$' $(OUTPUT)/check.log \
 		|| { echo "FAIL: counterexample found"; exit 1; }
-	@echo "All properties hold"
+	@echo "All gate properties hold"
 
 scenarios: $(JAR)
-	@echo "=== Scenario verification ==="
+	@echo "=== Gate scenario verification ==="
 	@mkdir -p $(OUTPUT)
 	@java -Djava.awt.headless=true -jar $(JAR) exec -f -o $(OUTPUT)/scenarios \
-		$(ALLOY_DIR)/scenarios.als 2>&1 \
+		$(ALLOY_DIR)/gate_scenarios.als 2>&1 \
 		| tee $(OUTPUT)/scenarios.log
 	@# Exit non-zero if any scenario is UNSAT (expected instance not found)
 	@! grep -qE 'UNSAT' $(OUTPUT)/scenarios.log \
 		|| { echo "FAIL: scenario unsat"; exit 1; }
 	@echo "All scenarios satisfiable"
+
+# Check the measure models: the affected set and blast radius, and the
+# significance level. Each file mixes checks (must be UNSAT) and runs (must be
+# SAT, including one that documents a property that deliberately fails).
+check-measures: $(JAR)
+	@echo "=== Measure model checks ==="
+	@mkdir -p $(OUTPUT)
+	@for m in blast_radius significance; do \
+		java -Djava.awt.headless=true -jar $(JAR) exec -f -o $(OUTPUT)/$$m \
+			$(ALLOY_DIR)/$$m.als 2>&1 | tee $(OUTPUT)/$$m.log; \
+		! grep -qE '^[0-9]+\. check .* SAT$$' $(OUTPUT)/$$m.log \
+			|| { echo "FAIL: counterexample found in $$m"; exit 1; }; \
+		! grep -qE '^[0-9]+\. run .*UNSAT$$' $(OUTPUT)/$$m.log \
+			|| { echo "FAIL: unsatisfiable run in $$m"; exit 1; }; \
+	done
+	@echo "All measure properties hold"
 
 # Check the check-run layer (alloy/check_properties.als). Writes to a separate
 # output directory and never emits instance XML, so `make generate` - which
@@ -71,17 +87,27 @@ scenarios-action: $(JAR)
 	@echo "All check-run scenarios satisfiable"
 
 # Solve the scenario `run` commands and dump instance XML files.
-# Runs from within alloy/ so `open pr_review` resolves against the local file.
+# Runs from within alloy/ so `open gate` resolves against the local file.
 generate-instances: $(JAR)
 	@echo "=== Generating Alloy instance XML ==="
 	@rm -rf $(RUNTIME) && mkdir -p $(RUNTIME)
 	cd $(ALLOY_DIR) && \
-	java -Djava.awt.headless=true -jar alloy.jar exec --type xml -o runtime scenarios.als
+	java -Djava.awt.headless=true -jar alloy.jar exec --type xml -o runtime gate_scenarios.als
 	@find $(RUNTIME) -name '*.xml' | sort
 
-# Parse the instance XML with the Go generator and emit a table-driven test.
+# Parse the instance XML with the Go generator and emit table-driven tests:
+# the gate's examples, every significance level the model assigns, and the
+# affected sets and exemptions of small reference graphs.
 generate: generate-instances
-	$(GO) run ./cmd/genalloy -als $(ALLOY_DIR)/scenarios.als -xml $(RUNTIME) -out eval/evaluator_alloy_test.go
+	$(GO) run ./cmd/genalloy -als $(ALLOY_DIR)/gate_scenarios.als -xml $(RUNTIME) -out eval/evaluator_alloy_test.go
+	@rm -rf $(ALLOY_DIR)/runtime-sig
+	cd $(ALLOY_DIR) && \
+	java -Djava.awt.headless=true -jar alloy.jar exec -q -f -r 0 --type xml -o runtime-sig significance_fixtures.als
+	$(GO) run ./cmd/genalloy -mode significance -xml $(ALLOY_DIR)/runtime-sig -out internal/significance/levels_alloy_test.go
+	@rm -rf $(ALLOY_DIR)/runtime-blast
+	cd $(ALLOY_DIR) && \
+	java -Djava.awt.headless=true -jar alloy.jar exec -q -f -c '*' -r 150 --type xml -o runtime-blast blast_fixtures.als
+	$(GO) run ./cmd/genalloy -mode blast -xml $(ALLOY_DIR)/runtime-blast -out internal/blast/affected_alloy_test.go
 
 # Regenerate the Alloy-driven test from the spec and run the full suite.
 verify: generate build
@@ -124,8 +150,8 @@ docker-run:
 	docker run --rm --network none -v "$(CURDIR):/repo:ro" $(IMAGE) \
 		--repo /repo --base-ref $(BASE_REF)
 
-all: check scenarios check-action scenarios-action generate build
+all: check scenarios check-measures check-action scenarios-action generate build
 	@echo "=== All checks complete ==="
 
 clean:
-	rm -rf bin $(OUTPUT) $(RUNTIME)
+	rm -rf bin $(OUTPUT) $(RUNTIME) $(ALLOY_DIR)/runtime-sig $(ALLOY_DIR)/runtime-blast

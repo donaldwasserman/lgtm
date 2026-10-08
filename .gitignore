@@ -1,5 +1,7 @@
 alloy/output/
 alloy/runtime/
+alloy/runtime-sig/
+alloy/runtime-blast/
 alloy/alloy.jar
 bin/
 .idea/

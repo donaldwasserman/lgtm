@@ -1,6 +1,6 @@
-// Command lgtm compares a base and head source tree with Tree-sitter,
-// computes PR-review complexity metrics, and emits a JSON decision matching
-// the Alloy-grounded eval.RequiresReview logic.
+// Command lgtm compares a base and head source tree with Tree-sitter, reports
+// one score per measure, and applies the gate (eval.Evaluate, specified in
+// alloy/gate.als) configured by its threshold flags.
 //
 // The trees come either from two directories (--base/--head) or from a git
 // checkout (--repo/--base-ref), in which case lgtm extracts the merge base
@@ -22,15 +22,23 @@ import (
 	"sort"
 
 	"github.com/donaldwasserman/lgtm/eval"
+	"github.com/donaldwasserman/lgtm/internal/blast"
+	"github.com/donaldwasserman/lgtm/internal/cognitive"
 	"github.com/donaldwasserman/lgtm/internal/diff"
 	"github.com/donaldwasserman/lgtm/internal/metrics"
 	"github.com/donaldwasserman/lgtm/internal/model"
 	"github.com/donaldwasserman/lgtm/internal/parse"
+	"github.com/donaldwasserman/lgtm/internal/significance"
+	"github.com/donaldwasserman/lgtm/internal/symbols"
 )
 
 // schemaVersion is bumped whenever a field of report is renamed, removed or
 // changes meaning. Adding a field does not bump it.
-const schemaVersion = 1
+//
+// 2: "metrics" became "scores" (one score per measure, null = unavailable),
+// "thresholds" became "gate" (null = off), and "facts" and "reasons" were
+// added.
+const schemaVersion = 2
 
 const (
 	verdictReviewRequired = "review-required"
@@ -38,17 +46,22 @@ const (
 )
 
 type report struct {
-	SchemaVersion  int             `json:"schemaVersion"`
-	Verdict        string          `json:"verdict"`
-	RequiresReview bool            `json:"requiresReview"`
-	Metrics        eval.Metrics    `json:"metrics"`
-	Thresholds     eval.Thresholds `json:"thresholds"`
-	ParseErrors    []parseError    `json:"parseErrors,omitempty"`
-	Files          []*fileSummary  `json:"files"`
+	SchemaVersion  int           `json:"schemaVersion"`
+	Verdict        string        `json:"verdict"`
+	RequiresReview bool          `json:"requiresReview"`
+	Reasons        []eval.Reason `json:"reasons"`
+	Scores         eval.Scores   `json:"scores"`
+	Facts          eval.Facts    `json:"facts"`
+	Gate           eval.Gate     `json:"gate"`
+	// Contributors names the symbols behind each new score, keyed like
+	// scores (cogDelta, newFunctionComplexity, ...), largest first.
+	Contributors map[string]any `json:"contributors"`
+	ParseErrors  []parseError   `json:"parseErrors,omitempty"`
+	Files        []*fileSummary `json:"files"`
 }
 
 // parseError names a file that could not be parsed. Any entry here forces
-// review: the metrics no longer describe the whole change.
+// review: the scores no longer describe the whole change.
 type parseError struct {
 	Path   string `json:"path"`
 	Side   string `json:"side"` // "base" or "head"
@@ -75,9 +88,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 	repo := fs.String("repo", "", "path to a git checkout; use with --base-ref instead of --base/--head")
 	baseRef := fs.String("base-ref", "", "git ref the change targets; the base tree is its merge base with --head-ref")
 	headRef := fs.String("head-ref", "HEAD", "git ref of the change itself")
-	thetaDepth := fs.Int("theta-depth", 7, "high depth threshold")
-	thetaBreadth := fs.Int("theta-breadth", 6, "high breadth threshold")
-	epsilonTrivial := fs.Int("epsilon-trivial", 1, "below-depth trivial epsilon")
+	gate := eval.DefaultGate
+	gateFlags(fs, &gate)
 	trusted := fs.Bool("trusted", false, "submitter is a trusted contributor (exempts review); the caller decides who is trusted")
 	output := fs.String("output", "", "also write the JSON report to this file")
 	exitZero := fs.Bool("exit-zero", false, "exit 0 whatever the verdict; failures still exit non-zero")
@@ -129,13 +141,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 		*base, *head = trees.base, trees.head
 	}
 
-	thr := eval.Thresholds{
-		ThetaDepth:     *thetaDepth,
-		ThetaBreadth:   *thetaBreadth,
-		EpsilonTrivial: *epsilonTrivial,
+	if err := gate.Validate(); err != nil {
+		fmt.Fprintln(stderr, "error:", err)
+		return 2
 	}
 
-	out, requiresReview, err := analyze(*base, *head, thr, *trusted)
+	out, requiresReview, err := analyze(*base, *head, gate, *trusted)
 	if err != nil {
 		fmt.Fprintln(stderr, "error:", err)
 		return 2
@@ -164,9 +175,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-// analyze scans both trees, diffs them, computes metrics, and returns the
-// JSON report plus the review decision.
-func analyze(base, head string, thr eval.Thresholds, trusted bool) (report, bool, error) {
+// analyze scans both trees, diffs them, computes the scores, applies the
+// gate, and returns the JSON report plus the review decision.
+func analyze(base, head string, gate eval.Gate, trusted bool) (report, bool, error) {
 	ctx := context.Background()
 	baseFiles, err := parse.Scan(ctx, base)
 	if err != nil {
@@ -182,25 +193,77 @@ func analyze(base, head string, thr eval.Thresholds, trusted bool) (report, bool
 		collectParseErrors("head", headFiles)...)
 
 	res := diff.Diff(baseFiles, headFiles)
-	m := metrics.Compute(res, trusted, len(parseErrs) > 0)
-	decision := eval.RequiresReview(m, thr)
+	scores := metrics.Compute(res)
+	baseSyms, headSyms := symbols.Extract(baseFiles), symbols.Extract(headFiles)
+	var changedFiles []string
+	for _, fc := range res.Files {
+		changedFiles = append(changedFiles, fc.Path)
+	}
+	modules := symbols.ModulesTouched(changedFiles, baseSyms, headSyms)
+	scores.BreadthModules = &modules
+	contributors := map[string]any{}
+
+	pairs := symbols.Compare(baseSyms, headSyms)
+	cog := cognitive.Measure(pairs)
+	scores.CogDelta, scores.NewFunctionComplexity = &cog.Delta, &cog.NewMax
+	contributors["cogDelta"] = nonNil(cog.Deltas)
+	contributors["newFunctionComplexity"] = nonNil(cog.News)
+
+	// The reference graph is built on base: new code has no callers yet.
+	graph := blast.Build(baseSyms)
+	exemption := blast.NewExemption(graph, base, head)
+	sig := significance.Measure(pairs, exemption.Exempt)
+	scores.Significance = &sig.Score
+	contributors["significance"] = sig.Contributors()
+
+	var changed []*symbols.Symbol
+	called := eval.None
+	for _, r := range sig.Rated {
+		if r.Level == eval.None {
+			continue // locals renamed: nothing a caller can observe
+		}
+		changed = append(changed, r.Symbol())
+		if len(graph.Callers(r.Symbol())) > 0 {
+			called = max(called, r.Level)
+		}
+	}
+	br := blast.Measure(graph, changed)
+	scores.BlastRadius, scores.CalledSignificance = &br.Radius, &called
+	contributors["blastRadius"] = br.Contributors
+	facts := eval.Facts{Trusted: trusted, Unparsed: len(parseErrs) > 0}
+	d := eval.Evaluate(scores, facts, gate)
 
 	verdict := verdictNoReview
-	if decision {
+	if d.RequiresReview {
 		verdict = verdictReviewRequired
+	}
+	reasons := d.Reasons
+	if reasons == nil {
+		reasons = []eval.Reason{} // an empty list, not null, in the report
 	}
 	rep := report{
 		SchemaVersion:  schemaVersion,
 		Verdict:        verdict,
-		RequiresReview: decision,
-		Metrics:        m,
-		Thresholds:     thr,
+		RequiresReview: d.RequiresReview,
+		Reasons:        reasons,
+		Scores:         scores,
+		Facts:          facts,
+		Gate:           gate,
+		Contributors:   contributors,
 		ParseErrors:    parseErrs,
 	}
 	for _, fc := range res.Files {
 		rep.Files = append(rep.Files, &fileSummary{Path: fc.Path, Kind: string(fc.Kind)})
 	}
-	return rep, decision, nil
+	return rep, d.RequiresReview, nil
+}
+
+// nonNil keeps an empty contributor list as [] rather than null.
+func nonNil[T any](xs []T) []T {
+	if xs == nil {
+		return []T{}
+	}
+	return xs
 }
 
 // collectParseErrors lists the files on one side that could not be parsed,
