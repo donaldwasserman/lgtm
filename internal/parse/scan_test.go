@@ -4,10 +4,40 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/donaldwasserman/lgtm/internal/model"
 )
+
+func TestScanPairSharesIdenticalFiles(t *testing.T) {
+	base, head := t.TempDir(), t.TempDir()
+	write := func(dir, name, src string) {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(base, "same.go", "package p\n\nfunc A() {}\n")
+	write(head, "same.go", "package p\n\nfunc A() {}\n")
+	write(base, "edit.go", "package p\n\nfunc B() {}\n")
+	write(head, "edit.go", "package p\n\nfunc B() { A() }\n")
+
+	b, h, err := ScanPair(context.Background(), base, head)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b["same.go"] != h["same.go"] {
+		t.Error("identical file was parsed twice")
+	}
+	if b["edit.go"] == h["edit.go"] {
+		t.Error("modified file must be parsed on each side")
+	}
+	wantB, _ := Scan(context.Background(), base)
+	wantH, _ := Scan(context.Background(), head)
+	if !reflect.DeepEqual(b, wantB) || !reflect.DeepEqual(h, wantH) {
+		t.Error("ScanPair differs from Scan on each tree")
+	}
+}
 
 func TestScanAndCallDepth(t *testing.T) {
 	dir := t.TempDir()

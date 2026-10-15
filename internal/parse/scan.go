@@ -2,6 +2,7 @@ package parse
 
 import (
 	"context"
+	"crypto/sha256"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -16,7 +17,37 @@ import (
 // model.File keyed by its relative path. Unsupported files are skipped and
 // unparseable files are recorded with an Error.
 func Scan(ctx context.Context, dir string) (map[string]*model.File, error) {
+	files, _, err := scan(ctx, dir, nil)
+	return files, err
+}
+
+// ScanPair scans a base and a head tree. A file whose bytes are identical on
+// both sides is parsed once and the same *model.File is returned for both, so
+// the unchanged part of a repository costs one parse instead of two. The
+// result is the same as calling Scan on each tree.
+func ScanPair(ctx context.Context, base, head string) (baseFiles, headFiles map[string]*model.File, err error) {
+	baseFiles, sums, err := scan(ctx, base, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	headFiles, _, err = scan(ctx, head, &reuse{files: baseFiles, sums: sums})
+	if err != nil {
+		return nil, nil, err
+	}
+	return baseFiles, headFiles, nil
+}
+
+// reuse is the already-parsed side that scan may borrow from.
+type reuse struct {
+	files map[string]*model.File
+	sums  map[string][sha256.Size]byte
+}
+
+// scan parses dir. It also returns a digest of each parsed file's source, and
+// when prev is set, skips parsing any file whose digest matches prev's.
+func scan(ctx context.Context, dir string, prev *reuse) (map[string]*model.File, map[string][sha256.Size]byte, error) {
 	files := map[string]*model.File{}
+	sums := map[string][sha256.Size]byte{}
 	// One parser per language, reused across files and closed on the way out;
 	// the binding allocates C memory that is not reclaimed otherwise.
 	parsers := map[string]*sitter.Parser{}
@@ -47,35 +78,46 @@ func Scan(ctx context.Context, dir string) (map[string]*model.File, error) {
 		if err != nil {
 			return err
 		}
+		sum := sha256.Sum256(src)
+		sums[rel] = sum
+		if prev != nil {
+			if f, ok := prev.files[rel]; ok && prev.sums[rel] == sum {
+				files[rel] = f
+				return nil
+			}
+		}
 		p, ok := parsers[spec.ID]
 		if !ok {
 			p = sitter.NewParser()
 			p.SetLanguage(spec.GetLang())
 			parsers[spec.ID] = p
 		}
-		parseSrc := src
-		if spec.rewrite != nil {
-			parseSrc = spec.rewrite(src)
-		}
-		tree, perr := p.ParseCtx(ctx, nil, parseSrc)
-		if perr != nil {
-			files[rel] = &model.File{Path: rel, Lang: spec.ID,
-				Error: &model.FileErr{Msg: perr.Error()}}
-			return nil
-		}
-		f := &model.File{Path: rel, Lang: spec.ID}
-		// Tree-sitter reports malformed source as ERROR/MISSING nodes rather
-		// than a parse failure, so this - not perr - is the branch that fires
-		// on broken input.
-		if tree.RootNode().HasError() {
-			f.Error = &model.FileErr{Msg: "syntax error"}
-		}
-		f.Root = spec.build(tree.RootNode(), src, 0, 0)
-		computeCallDepth(f.Root, spec)
-		files[rel] = f
+		files[rel] = parseFile(ctx, p, spec, rel, src)
 		return nil
 	})
-	return files, err
+	return files, sums, err
+}
+
+func parseFile(ctx context.Context, p *sitter.Parser, spec *Spec, rel string, src []byte) *model.File {
+	parseSrc := src
+	if spec.rewrite != nil {
+		parseSrc = spec.rewrite(src)
+	}
+	tree, perr := p.ParseCtx(ctx, nil, parseSrc)
+	if perr != nil {
+		return &model.File{Path: rel, Lang: spec.ID,
+			Error: &model.FileErr{Msg: perr.Error()}}
+	}
+	f := &model.File{Path: rel, Lang: spec.ID}
+	// Tree-sitter reports malformed source as ERROR/MISSING nodes rather
+	// than a parse failure, so this - not perr - is the branch that fires
+	// on broken input.
+	if tree.RootNode().HasError() {
+		f.Error = &model.FileErr{Msg: "syntax error"}
+	}
+	f.Root = spec.build(tree.RootNode(), src, 0, 0)
+	computeCallDepth(f.Root, spec)
+	return f
 }
 
 // SkipDir reports whether a directory should be excluded from scanning.
