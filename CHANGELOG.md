@@ -3,7 +3,7 @@
 Each version's section becomes its GitHub release notes. Versioning rules are
 in [docs/releasing.md](docs/releasing.md#version-numbers).
 
-## Unreleased
+## 0.0.2
 
 Changes how the gate decides, and the report format (`schemaVersion` 2).
 
