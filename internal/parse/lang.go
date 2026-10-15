@@ -45,6 +45,10 @@ type Spec struct {
 	// nameTypes are the node types accepted as a definition's name. Nil means
 	// plain "identifier" only.
 	nameTypes map[string]bool
+	// rewrite, if set, returns the bytes handed to the parser in place of
+	// the source. It must preserve length and byte offsets; node text is
+	// still read from the original source.
+	rewrite func(src []byte) []byte
 }
 
 var specs = []*Spec{
@@ -109,6 +113,7 @@ var specs = []*Spec{
 		Exts:      map[string]bool{"ts": true, "mts": true, "cts": true},
 		nameField: tsNameFields,
 		callTypes: tsCallTypes,
+		rewrite:   maskTypeofImports,
 	},
 	{
 		ID:        "tsx",
@@ -116,6 +121,7 @@ var specs = []*Spec{
 		Exts:      map[string]bool{"tsx": true},
 		nameField: tsNameFields,
 		callTypes: tsCallTypes,
+		rewrite:   maskTypeofImports,
 	},
 	{
 		ID:      "java",
