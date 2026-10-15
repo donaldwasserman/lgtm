@@ -179,11 +179,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 // gate, and returns the JSON report plus the review decision.
 func analyze(base, head string, gate eval.Gate, trusted bool) (report, bool, error) {
 	ctx := context.Background()
-	baseFiles, err := parse.Scan(ctx, base)
-	if err != nil {
-		return report{}, false, err
-	}
-	headFiles, err := parse.Scan(ctx, head)
+	baseFiles, headFiles, err := parse.ScanPair(ctx, base, head)
 	if err != nil {
 		return report{}, false, err
 	}
