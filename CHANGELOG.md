@@ -3,6 +3,13 @@
 Each version's section becomes its GitHub release notes. Versioning rules are
 in [docs/releasing.md](docs/releasing.md#version-numbers).
 
+## 0.0.3
+
+Faster runs; results are unchanged.
+
+- Files that are identical on both sides of the diff are parsed once
+  instead of twice.
+
 ## 0.0.2
 
 Changes how the gate decides, and the report format (`schemaVersion` 2).
