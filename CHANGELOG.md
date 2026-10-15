@@ -21,6 +21,9 @@ Changes how the gate decides, and the report format (`schemaVersion` 2).
   became `gate`. The check summary lists every score.
 - Fixed: `lgtm` crashed on mutually recursive functions, and call depth
   could undercount at random where two call paths share a callee.
+- Fixed: TypeScript files that pass an inline import type to a call, such
+  as `importOriginal<typeof import("x")>()`, were reported as unparseable
+  or misread as comparisons.
 
 ## 0.0.1
 

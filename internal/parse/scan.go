@@ -53,7 +53,11 @@ func Scan(ctx context.Context, dir string) (map[string]*model.File, error) {
 			p.SetLanguage(spec.GetLang())
 			parsers[spec.ID] = p
 		}
-		tree, perr := p.ParseCtx(ctx, nil, src)
+		parseSrc := src
+		if spec.rewrite != nil {
+			parseSrc = spec.rewrite(src)
+		}
+		tree, perr := p.ParseCtx(ctx, nil, parseSrc)
 		if perr != nil {
 			files[rel] = &model.File{Path: rel, Lang: spec.ID,
 				Error: &model.FileErr{Msg: perr.Error()}}
