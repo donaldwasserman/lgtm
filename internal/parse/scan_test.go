@@ -22,7 +22,7 @@ func TestScanPairSharesIdenticalFiles(t *testing.T) {
 	write(base, "edit.go", "package p\n\nfunc B() {}\n")
 	write(head, "edit.go", "package p\n\nfunc B() { A() }\n")
 
-	b, h, err := ScanPair(context.Background(), base, head)
+	b, h, err := ScanPair(context.Background(), base, head, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -145,6 +145,7 @@ Git mode needs `git` installed; the Docker image includes it.
 | `--theta-new-function` | `25` | Cognitive complexity of one new function that requires review |
 | `--theta-significance` | `crucial` | Significance level (`low`, `medium`, `high`, `crucial`) that requires review |
 | `--theta-blast` | `50` | Blast radius that requires review |
+| `--exclude` | | Glob of paths to leave out of the scan; repeat for several (see below) |
 | `--trusted` | `false` | Treat the author as trusted (skips review). You decide who that is |
 | `--output` | | Also write the report to this file |
 | `--exit-zero` | `false` | Exit `0` whatever the verdict; only errors exit non-zero |
@@ -155,6 +156,16 @@ Git mode needs `git` installed; the Docker image includes it.
 **Exit code:** `0` no review needed, `1` review needed, `2` error (including a
 branch that can't be found). With `--exit-zero`, read `verdict` from the
 report instead.
+
+`--exclude` patterns match paths relative to the repository root. A pattern
+without a slash (`*.pb.go`, `testdata`) matches at any depth; one with a slash
+(`docs/gen`, `src/**/*.min.js`) is anchored at the root. `**` spans any number
+of directories, and a pattern that matches a directory excludes everything
+under it. Excluded files are neither parsed nor counted, whichever side of the
+diff they are on. `node_modules`, `vendor`, `dist`, `build` and similar are
+always skipped. Excluded files are still searched as text when deciding
+whether a deleted private symbol is unreferenced, so excluding tests or
+generated code cannot hide a use.
 
 Every `--theta-*` flag takes a number or `off`. `0` is rejected: it would
 flag every change.

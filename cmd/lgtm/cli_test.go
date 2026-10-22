@@ -40,6 +40,11 @@ func TestRunExitCodes(t *testing.T) {
 		{"zero_threshold", []string{"--base", trivialBase, "--head", trivialHead, "--theta-depth", "0"}, 2},
 		{"bad_threshold", []string{"--base", trivialBase, "--head", trivialHead, "--theta-cog", "lots"}, 2},
 		{"bad_level", []string{"--base", trivialBase, "--head", trivialHead, "--theta-significance", "severe"}, 2},
+		// Everything the change touches is under pkg/, so excluding it leaves nothing to flag.
+		{"exclude_dir", []string{"--base", broadBase, "--head", broad, "--exclude", "pkg"}, 0},
+		{"exclude_glob", []string{"--base", broadBase, "--head", broad, "--exclude", "pkg/f[a-h].go"}, 0},
+		{"exclude_other", []string{"--base", broadBase, "--head", broad, "--exclude", "docs/**"}, 1},
+		{"exclude_bad_glob", []string{"--base", trivialBase, "--head", trivialHead, "--exclude", "[a"}, 2},
 		{"level_name", []string{"--base", trivialBase, "--head", trivialHead, "--theta-significance", "high"}, 0},
 	}
 	for _, c := range cases {

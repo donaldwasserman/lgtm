@@ -57,7 +57,7 @@ func TestAnalyzeRequiresReview(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			base := writeTree(t, "base", c.base)
 			head := writeTree(t, "head", c.head)
-			_, requiresReview, err := analyze(base, head, c.thr, false)
+			_, requiresReview, err := analyze(base, head, c.thr, false, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -78,14 +78,14 @@ func TestTrustExemptsReview(t *testing.T) {
 	headFiles["f.go"] = "package p\nfunc helper(){ _ = Z() }\n"
 	head := writeTree(t, "head", headFiles)
 
-	rep, noExempt, err := analyze(base, head, eval.DefaultGate, false)
+	rep, noExempt, err := analyze(base, head, eval.DefaultGate, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !noExempt {
 		t.Fatal("expected review required without exemption")
 	}
-	rep2, exempt, err := analyze(base, head, eval.DefaultGate, true)
+	rep2, exempt, err := analyze(base, head, eval.DefaultGate, true, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,7 +139,7 @@ func TestUnparseableFileForcesReview(t *testing.T) {
 		"x.go": "package p\n\nfunc A() int { return \n((( \n",
 	})
 
-	rep, requiresReview, err := analyze(base, head, eval.DefaultGate, false)
+	rep, requiresReview, err := analyze(base, head, eval.DefaultGate, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -155,7 +155,7 @@ func TestUnparseableFileForcesReview(t *testing.T) {
 	}
 
 	// The top-20% exemption must not rescue a change that could not be measured.
-	_, exempt, err := analyze(base, head, eval.DefaultGate, true)
+	_, exempt, err := analyze(base, head, eval.DefaultGate, true, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,7 +170,7 @@ func TestCleanTreeReportsNoParseErrors(t *testing.T) {
 	base := writeTree(t, "base", map[string]string{"x.go": "package p\n\nfunc A() int { return 1 }\n"})
 	head := writeTree(t, "head", map[string]string{"x.go": "package p\n\nfunc A() int { return 2 }\n"})
 
-	rep, requiresReview, err := analyze(base, head, eval.DefaultGate, false)
+	rep, requiresReview, err := analyze(base, head, eval.DefaultGate, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -242,7 +242,7 @@ func F(xs []int) int {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			rep, got, err := analyze(writeTree(t, "base", c.base), writeTree(t, "head", c.head), eval.DefaultGate, false)
+			rep, got, err := analyze(writeTree(t, "base", c.base), writeTree(t, "head", c.head), eval.DefaultGate, false, nil)
 			if err != nil {
 				t.Fatal(err)
 			}

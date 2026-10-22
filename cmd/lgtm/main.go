@@ -88,6 +88,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 	repo := fs.String("repo", "", "path to a git checkout; use with --base-ref instead of --base/--head")
 	baseRef := fs.String("base-ref", "", "git ref the change targets; the base tree is its merge base with --head-ref")
 	headRef := fs.String("head-ref", "HEAD", "git ref of the change itself")
+	var exclude stringsFlag
+	fs.Var(&exclude, "exclude", "glob of paths to leave out of the scan, e.g. \"**/*.pb.go\" or \"vendor/**\"; repeatable")
 	gate := eval.DefaultGate
 	gateFlags(fs, &gate)
 	trusted := fs.Bool("trusted", false, "submitter is a trusted contributor (exempts review); the caller decides who is trusted")
@@ -146,7 +148,13 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	out, requiresReview, err := analyze(*base, *head, gate, *trusted)
+	excl, err := parse.NewExclude(exclude)
+	if err != nil {
+		fmt.Fprintln(stderr, "error:", err)
+		return 2
+	}
+
+	out, requiresReview, err := analyze(*base, *head, gate, *trusted, excl)
 	if err != nil {
 		fmt.Fprintln(stderr, "error:", err)
 		return 2
@@ -177,9 +185,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 // analyze scans both trees, diffs them, computes the scores, applies the
 // gate, and returns the JSON report plus the review decision.
-func analyze(base, head string, gate eval.Gate, trusted bool) (report, bool, error) {
+func analyze(base, head string, gate eval.Gate, trusted bool, exclude *parse.Exclude) (report, bool, error) {
 	ctx := context.Background()
-	baseFiles, headFiles, err := parse.ScanPair(ctx, base, head)
+	baseFiles, headFiles, err := parse.ScanPair(ctx, base, head, exclude)
 	if err != nil {
 		return report{}, false, err
 	}
