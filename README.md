@@ -120,7 +120,7 @@ docker run --rm --network none -v "$PWD:/repo:ro" \
 
 # Prebuilt binary (Linux and macOS): pick lgtm_<version>_<os>_<arch>.tar.gz
 # from https://github.com/donaldwasserman/lgtm/releases, e.g.
-curl -fsSL https://github.com/donaldwasserman/lgtm/releases/download/v0.0.3/lgtm_0.0.3_linux_amd64.tar.gz | tar -xz lgtm
+curl -fsSL https://github.com/donaldwasserman/lgtm/releases/download/v0.0.4/lgtm_0.0.4_linux_amd64.tar.gz | tar -xz lgtm
 
 # From source (needs Go 1.25+ and a C compiler)
 go install github.com/donaldwasserman/lgtm/cmd/lgtm@latest
