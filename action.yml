@@ -88,6 +88,13 @@ inputs:
     description: 'Blast radius (callers within 3 hops of changed symbols) at which review is required, or "off".'
     required: false
     default: '50'
+  exclude:
+    description: >-
+      Globs of paths to leave out of the scan, one per line, relative to the
+      repository root (e.g. "**/*.pb.go"). A pattern without a slash matches
+      at any depth; "**" spans directories.
+    required: false
+    default: ''
   trust-mode:
     description: >-
       How the trusted-contributor exemption is decided: "none" (nobody is
@@ -431,6 +438,7 @@ runs:
         LGTM_THETA_NEW_FUNCTION: ${{ inputs.theta-new-function }}
         LGTM_THETA_SIGNIFICANCE: ${{ inputs.theta-significance }}
         LGTM_THETA_BLAST: ${{ inputs.theta-blast }}
+        LGTM_EXCLUDE: ${{ inputs.exclude }}
         LGTM_TRUSTED_INPUT: ${{ steps.trust.outputs.trusted == 'true' }}
       run: |
         set -uo pipefail
@@ -451,6 +459,12 @@ runs:
                  --base /trees/base --head /trees/head)
         fi
 
+        # One --exclude per non-blank line of the input.
+        excludes=()
+        while IFS= read -r pat; do
+          [ -n "${pat//[[:space:]]/}" ] && excludes+=(--exclude "$pat")
+        done <<< "$LGTM_EXCLUDE"
+
         report="$RUNNER_TEMP/lgtm-report.json"
         rm -f "$report"
         if [ -z "$mode" ]; then
@@ -467,6 +481,7 @@ runs:
             --theta-new-function "$LGTM_THETA_NEW_FUNCTION" \
             --theta-significance "$LGTM_THETA_SIGNIFICANCE" \
             --theta-blast "$LGTM_THETA_BLAST" \
+            "${excludes[@]+"${excludes[@]}"}" \
             --trusted="$LGTM_TRUSTED_INPUT" && code=0 || code=$?
         fi
 

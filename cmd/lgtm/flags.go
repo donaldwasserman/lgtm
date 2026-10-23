@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/donaldwasserman/lgtm/eval"
 )
@@ -29,6 +30,16 @@ func (f thresholdFlag) Set(s string) error {
 		return fmt.Errorf("want a number or \"off\", got %q", s)
 	}
 	*f.p = &v
+	return nil
+}
+
+// stringsFlag collects a repeatable string flag.
+type stringsFlag []string
+
+func (f *stringsFlag) String() string { return strings.Join(*f, ",") }
+
+func (f *stringsFlag) Set(s string) error {
+	*f = append(*f, s)
 	return nil
 }
 

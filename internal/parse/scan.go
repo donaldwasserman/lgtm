@@ -17,20 +17,21 @@ import (
 // model.File keyed by its relative path. Unsupported files are skipped and
 // unparseable files are recorded with an Error.
 func Scan(ctx context.Context, dir string) (map[string]*model.File, error) {
-	files, _, err := scan(ctx, dir, nil)
+	files, _, err := scan(ctx, dir, nil, nil)
 	return files, err
 }
 
 // ScanPair scans a base and a head tree. A file whose bytes are identical on
 // both sides is parsed once and the same *model.File is returned for both, so
 // the unchanged part of a repository costs one parse instead of two. The
-// result is the same as calling Scan on each tree.
-func ScanPair(ctx context.Context, base, head string) (baseFiles, headFiles map[string]*model.File, err error) {
-	baseFiles, sums, err := scan(ctx, base, nil)
+// result is the same as calling Scan on each tree. Paths matched by exclude
+// (which may be nil) are left out of both.
+func ScanPair(ctx context.Context, base, head string, exclude *Exclude) (baseFiles, headFiles map[string]*model.File, err error) {
+	baseFiles, sums, err := scan(ctx, base, nil, exclude)
 	if err != nil {
 		return nil, nil, err
 	}
-	headFiles, _, err = scan(ctx, head, &reuse{files: baseFiles, sums: sums})
+	headFiles, _, err = scan(ctx, head, &reuse{files: baseFiles, sums: sums}, exclude)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -43,9 +44,9 @@ type reuse struct {
 	sums  map[string][sha256.Size]byte
 }
 
-// scan parses dir. It also returns a digest of each parsed file's source, and
+// scan parses dir, leaving out paths exclude matches. It also returns a digest of each parsed file's source, and
 // when prev is set, skips parsing any file whose digest matches prev's.
-func scan(ctx context.Context, dir string, prev *reuse) (map[string]*model.File, map[string][sha256.Size]byte, error) {
+func scan(ctx context.Context, dir string, prev *reuse, exclude *Exclude) (map[string]*model.File, map[string][sha256.Size]byte, error) {
 	files := map[string]*model.File{}
 	sums := map[string][sha256.Size]byte{}
 	// One parser per language, reused across files and closed on the way out;
@@ -60,19 +61,19 @@ func scan(ctx context.Context, dir string, prev *reuse) (map[string]*model.File,
 		if err != nil {
 			return err
 		}
+		rel, err := filepath.Rel(dir, path)
+		if err != nil {
+			return err
+		}
 		if d.IsDir() {
-			if SkipDir(path) {
+			if SkipDir(path) || (rel != "." && exclude.Match(filepath.ToSlash(rel))) {
 				return filepath.SkipDir
 			}
 			return nil
 		}
 		spec := LanguageFor(path)
-		if spec == nil {
+		if spec == nil || exclude.Match(filepath.ToSlash(rel)) {
 			return nil
-		}
-		rel, err := filepath.Rel(dir, path)
-		if err != nil {
-			return err
 		}
 		src, err := os.ReadFile(path)
 		if err != nil {

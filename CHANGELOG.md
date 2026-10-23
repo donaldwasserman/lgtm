@@ -3,6 +3,11 @@
 Each version's section becomes its GitHub release notes. Versioning rules are
 in [docs/releasing.md](docs/releasing.md#version-numbers).
 
+## Unreleased
+
+- `--exclude` (action input `exclude`) leaves paths matching a glob out of
+  the scan. Repeat the flag, or put one pattern per line in the input.
+
 ## 0.0.3
 
 Faster runs; results are unchanged.

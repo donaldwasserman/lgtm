@@ -63,6 +63,7 @@ the branch split off.
 | `theta-new-function` | `25` | Cognitive complexity of one new function that requires review |
 | `theta-significance` | `crucial` | Significance level (`low`, `medium`, `high`, `crucial`) that requires review. While on, an exported signature change to something with callers also does |
 | `theta-blast` | `50` | Blast radius (callers within three hops of what changed) that requires review |
+| `exclude` | | Globs of paths to leave out of the scan, one per line (e.g. `**/*.pb.go`). A pattern without a slash matches at any depth |
 | `trust-mode` | `none` | Who skips review: `none`, `codeowners`, `top-count`, `top-percent`. See [Trust modes](#trust-modes) |
 | `trust-count` | `10` | For `top-count`: how many top contributors are trusted |
 | `trust-percent` | `20` | For `top-percent`: what share of contributors are trusted |
