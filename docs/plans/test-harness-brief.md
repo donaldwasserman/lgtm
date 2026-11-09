@@ -11,6 +11,13 @@ lgtm is being rebuilt to report several new measures (below), which don't
 exist yet. The harness has to work **today** against the current release,
 and pick up each new measure as it lands without restructuring.
 
+> Written against schema 2. Schema 3 removes `--trusted`, `--epsilon-trivial`,
+> `facts.trusted`, `facts.analysisFailed` and `scores.depthTotal`; adds
+> `scores.linesAdded`, `scores.uncoveredFiles` and `facts.alwaysReview`; and
+> counts only substantive, non-test files in breadth. Edit depth is off in the
+> default gate. Treat anything below about trust or frozen depth as obsolete.
+> `scripts/replay.sh` covers corpus replay for one checkout.
+
 ## Vocabulary
 
 Use these words in file names, test names and output.

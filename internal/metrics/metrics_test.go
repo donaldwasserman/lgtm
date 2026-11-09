@@ -55,12 +55,6 @@ def app():
 	if m.NewDepth <= 0 {
 		t.Fatalf("NewDepth = %d, want >0 (added call chain)", m.NewDepth)
 	}
-	if m.BreadthFiles != 1 {
-		t.Fatalf("Breadth = %d, want 1 file touched", m.BreadthFiles)
-	}
-	if m.DepthTotal < m.NewDepth {
-		t.Fatalf("DepthTotal %d < NewDepth %d", m.DepthTotal, m.NewDepth)
-	}
 	// a 5-deep call chain should exceed default theta depth 7 only via nesting,
 	// so just sanity-check against a lenient threshold.
 	g := eval.Gate{ThetaDepth: eval.On(1), ThetaBreadth: eval.On(1)}
@@ -103,8 +97,29 @@ func TestBreadthCountsOnlyChangedFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	m := Compute(diff.Diff(baseFiles, headFiles))
-	if m.BreadthFiles != 1 {
-		t.Fatalf("Breadth = %d, want 1 (only a.go changed)", m.BreadthFiles)
+	if res := diff.Diff(baseFiles, headFiles); len(res.Files) != 1 {
+		t.Fatalf("%d files changed, want 1 (only a.go)", len(res.Files))
+	}
+}
+
+func TestAddedLines(t *testing.T) {
+	cases := []struct {
+		name, base, head string
+		want             int
+	}{
+		{"new_file", "", "a\nb\n", 2},
+		{"blank_lines_ignored", "a\n", "a\n\n\n", 0},
+		{"moved_line", "a\nb\n", "b\na\n", 0},
+		{"edited_line", "a\nb\n", "a\nc\n", 1},
+		{"duplicate_added", "a\n", "a\na\n", 1},
+		{"indent_only", "a\n", "    a\n", 0},
+		{"deletion", "a\nb\n", "a\n", 0},
+	}
+	for _, c := range cases {
+		have := map[string]int{}
+		remember(have, c.base)
+		if got := added(have, c.head); got != c.want {
+			t.Errorf("%s: added = %d, want %d", c.name, got, c.want)
+		}
 	}
 }

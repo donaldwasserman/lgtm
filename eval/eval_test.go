@@ -9,7 +9,7 @@ import (
 )
 
 // DefaultGate must be the configuration the model calls `defaults`, which the
-// generated v1 examples (scenario_coreRefactor among them) are pinned to.
+// generated examples (scenario_coreRefactor among them) are pinned to.
 func TestDefaultGateMatchesModel(t *testing.T) {
 	for _, tc := range alloyCases {
 		if tc.name != "scenario_coreRefactor" {
@@ -43,14 +43,50 @@ func TestValidateRejectsZeroThresholds(t *testing.T) {
 }
 
 func TestReasonsNameEveryRuleThatFired(t *testing.T) {
-	s := eval.Scores{EditDepth: 9, DepthTotal: 9, BreadthFiles: 8,
+	s := eval.Scores{EditDepth: 9, BreadthFiles: 16, LinesAdded: 1000, UncoveredFiles: 1,
 		CogDelta: eval.On(6), BlastRadius: eval.On(60), Significance: eval.LevelOn(eval.High),
 		CalledSignificance: eval.LevelOn(eval.High)}
-	d := eval.Evaluate(s, eval.Facts{Unparsed: true}, eval.DefaultGate)
-	want := []eval.Reason{eval.ReasonUnparsed, eval.ReasonEditDepth, eval.ReasonBreadthFiles,
+	d := eval.Evaluate(s, eval.Facts{Unparsed: true, AlwaysReview: true}, eval.DefaultGate)
+	want := []eval.Reason{eval.ReasonUnparsed, eval.ReasonAlwaysReview, eval.ReasonBreadthFiles,
+		eval.ReasonLinesAdded, eval.ReasonUncovered,
 		eval.ReasonCogDelta, eval.ReasonCalledSignature, eval.ReasonBlastRadius}
 	if !reflect.DeepEqual(d.Reasons, want) {
 		t.Errorf("reasons = %v, want %v", d.Reasons, want)
+	}
+}
+
+func TestStricterNeverLoosens(t *testing.T) {
+	a := eval.Gate{ThetaCog: eval.On(5), ThetaBlast: eval.On(10), ThetaSignificance: eval.LevelOn(eval.Crucial)}
+	b := eval.Gate{ThetaCog: eval.On(9), ThetaLines: eval.On(100), ThetaSignificance: eval.LevelOn(eval.Medium)}
+	want := eval.Gate{ThetaCog: eval.On(5), ThetaBlast: eval.On(10), ThetaLines: eval.On(100),
+		ThetaSignificance: eval.LevelOn(eval.Medium)}
+	if got := a.Stricter(b); !reflect.DeepEqual(got, want) {
+		t.Errorf("Stricter = %+v, want %+v", got, want)
+	}
+	if got := b.Stricter(a); !reflect.DeepEqual(got, want) {
+		t.Errorf("Stricter is not symmetric: %+v", got)
+	}
+}
+
+func TestGateSet(t *testing.T) {
+	var g eval.Gate
+	for _, name := range eval.ThresholdNames {
+		v := "3"
+		if name == "significance" {
+			v = "medium"
+		}
+		if err := g.Set(name, v); err != nil {
+			t.Errorf("Set(%s): %v", name, err)
+		}
+		if err := g.Set(name, "off"); err != nil {
+			t.Errorf("Set(%s, off): %v", name, err)
+		}
+	}
+	if !reflect.DeepEqual(g, eval.Gate{}) {
+		t.Errorf("all off = %+v", g)
+	}
+	if g.Set("nope", "1") == nil || g.Set("cog", "lots") == nil || g.Set("significance", "severe") == nil {
+		t.Error("bad names and values must be errors")
 	}
 }
 

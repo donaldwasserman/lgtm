@@ -49,14 +49,5 @@ jobs:
         with:
           image: lgtm:pr
           base-ref: origin/${{ github.event.pull_request.base.ref }}
-          theta-depth: '7'
-          theta-breadth: '6'
-          epsilon-trivial: '1'
-          # Deliberately 'none' for this repo. Any ranking mode would exempt
-          # the top contributor, who writes nearly every PR here, so the gate
-          # would never fire on its own repository. Set trust-mode to
-          # 'codeowners' (or a ranking mode) on a repo with several active
-          # contributors; see "Trust modes" in docs/action.md.
-          trust-mode: 'none'
           check-name: 'LGTM / review-gate'
           label: 'needs-review'

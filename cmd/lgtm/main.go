@@ -19,11 +19,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sort"
 
 	"github.com/donaldwasserman/lgtm/eval"
 	"github.com/donaldwasserman/lgtm/internal/blast"
 	"github.com/donaldwasserman/lgtm/internal/cognitive"
+	"github.com/donaldwasserman/lgtm/internal/config"
 	"github.com/donaldwasserman/lgtm/internal/diff"
 	"github.com/donaldwasserman/lgtm/internal/metrics"
 	"github.com/donaldwasserman/lgtm/internal/model"
@@ -38,7 +40,11 @@ import (
 // 2: "metrics" became "scores" (one score per measure, null = unavailable),
 // "thresholds" became "gate" (null = off), and "facts" and "reasons" were
 // added.
-const schemaVersion = 2
+//
+// 3: facts.trusted, facts.analysisFailed, scores.depthTotal and
+// gate.epsilonTrivial were removed; scores.breadthFiles and breadthModules
+// count only substantive changes to non-test files.
+const schemaVersion = 3
 
 const (
 	verdictReviewRequired = "review-required"
@@ -53,8 +59,10 @@ type report struct {
 	Scores         eval.Scores   `json:"scores"`
 	Facts          eval.Facts    `json:"facts"`
 	Gate           eval.Gate     `json:"gate"`
-	// Contributors names the symbols behind each new score, keyed like
-	// scores (cogDelta, newFunctionComplexity, ...), largest first.
+	// Overrides names the path overrides that shaped Gate.
+	Overrides []string `json:"overrides"`
+	// Contributors names what is behind each score, keyed like scores
+	// (cogDelta, newFunctionComplexity, ...), largest first, plus alwaysReview.
 	Contributors map[string]any `json:"contributors"`
 	ParseErrors  []parseError   `json:"parseErrors,omitempty"`
 	Files        []*fileSummary `json:"files"`
@@ -71,7 +79,15 @@ type parseError struct {
 type fileSummary struct {
 	Path string `json:"path"`
 	Kind string `json:"kind"`
+	// Coverage says whether the measures saw the file.
+	Coverage string `json:"coverage"`
 }
+
+const (
+	coverageAnalyzed  = "analyzed"
+	coverageUncovered = "uncovered"
+	coverageIgnored   = "ignored"
+)
 
 // version is set at build time with -ldflags "-X main.version=...".
 var version = "dev"
@@ -89,10 +105,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 	baseRef := fs.String("base-ref", "", "git ref the change targets; the base tree is its merge base with --head-ref")
 	headRef := fs.String("head-ref", "HEAD", "git ref of the change itself")
 	var exclude stringsFlag
-	fs.Var(&exclude, "exclude", "glob of paths to leave out of the scan, e.g. \"**/*.pb.go\" or \"vendor/**\"; repeatable")
-	gate := eval.DefaultGate
-	gateFlags(fs, &gate)
-	trusted := fs.Bool("trusted", false, "submitter is a trusted contributor (exempts review); the caller decides who is trusted")
+	fs.Var(&exclude, "exclude", "glob of paths to leave out of the scan, e.g. \"**/*.pb.go\"; \"!entry\" removes a built-in entry; repeatable")
+	configPath := fs.String("config", "", "configuration file; default: "+config.FileName+" in the base tree, if there is one")
+	preset := fs.String("preset", "", "gate to start from: balanced (default) or strict")
+	pinned := map[string]string{}
+	gateFlags(fs, pinned)
 	output := fs.String("output", "", "also write the JSON report to this file")
 	exitZero := fs.Bool("exit-zero", false, "exit 0 whatever the verdict; failures still exit non-zero")
 	showVersion := fs.Bool("version", false, "print the version and exit")
@@ -143,18 +160,22 @@ func run(args []string, stdout, stderr io.Writer) int {
 		*base, *head = trees.base, trees.head
 	}
 
-	if err := gate.Validate(); err != nil {
+	cfgPath, required := *configPath, *configPath != ""
+	if !required {
+		cfgPath = filepath.Join(*base, config.FileName)
+	}
+	cfgFile, err := config.Load(cfgPath, required)
+	if err != nil {
 		fmt.Fprintln(stderr, "error:", err)
 		return 2
 	}
-
-	excl, err := parse.NewExclude(exclude)
+	cfg, err := cfgFile.Resolve(config.Options{Preset: *preset, Thresholds: pinned, Exclude: exclude})
 	if err != nil {
 		fmt.Fprintln(stderr, "error:", err)
 		return 2
 	}
 
-	out, requiresReview, err := analyze(*base, *head, gate, *trusted, excl)
+	out, requiresReview, err := analyze(*base, *head, cfg)
 	if err != nil {
 		fmt.Fprintln(stderr, "error:", err)
 		return 2
@@ -185,9 +206,13 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 // analyze scans both trees, diffs them, computes the scores, applies the
 // gate, and returns the JSON report plus the review decision.
-func analyze(base, head string, gate eval.Gate, trusted bool, exclude *parse.Exclude) (report, bool, error) {
+func analyze(base, head string, cfg *config.Resolved) (report, bool, error) {
 	ctx := context.Background()
-	baseFiles, headFiles, err := parse.ScanPair(ctx, base, head, exclude)
+	baseFiles, headFiles, err := parse.ScanPair(ctx, base, head, cfg.Exclude)
+	if err != nil {
+		return report{}, false, err
+	}
+	others, err := parse.ChangedUnscanned(base, head, cfg.Exclude)
 	if err != nil {
 		return report{}, false, err
 	}
@@ -199,13 +224,7 @@ func analyze(base, head string, gate eval.Gate, trusted bool, exclude *parse.Exc
 	res := diff.Diff(baseFiles, headFiles)
 	scores := metrics.Compute(res)
 	baseSyms, headSyms := symbols.Extract(baseFiles), symbols.Extract(headFiles)
-	var changedFiles []string
-	for _, fc := range res.Files {
-		changedFiles = append(changedFiles, fc.Path)
-	}
-	modules := symbols.ModulesTouched(changedFiles, baseSyms, headSyms)
-	scores.BreadthModules = &modules
-	contributors := map[string]any{}
+	contributors := map[string]any{"editDepth": metrics.DepthContributors(res)}
 
 	pairs := symbols.Compare(baseSyms, headSyms)
 	cog := cognitive.Measure(pairs)
@@ -215,12 +234,18 @@ func analyze(base, head string, gate eval.Gate, trusted bool, exclude *parse.Exc
 
 	// The reference graph is built on base: new code has no callers yet.
 	graph := blast.Build(baseSyms)
-	exemption := blast.NewExemption(graph, base, head)
+	exemption := blast.NewExemption(graph, cfg.TextSkip, base, head)
 	sig := significance.Measure(pairs, exemption.Exempt)
 	scores.Significance = &sig.Score
 	contributors["significance"] = sig.Contributors()
 
 	var changed []*symbols.Symbol
+	headOf := map[*symbols.Symbol]*symbols.Symbol{}
+	for _, p := range pairs {
+		if p.Base != nil && p.Head != nil {
+			headOf[p.Base] = p.Head
+		}
+	}
 	called := eval.None
 	for _, r := range sig.Rated {
 		if r.Level == eval.None {
@@ -231,10 +256,42 @@ func analyze(base, head string, gate eval.Gate, trusted bool, exclude *parse.Exc
 			called = max(called, r.Level)
 		}
 	}
-	br := blast.Measure(graph, changed)
+	br := blast.Measure(graph, changed, headOf)
 	scores.BlastRadius, scores.CalledSignificance = &br.Radius, &called
 	contributors["blastRadius"] = br.Contributors
-	facts := eval.Facts{Trusted: trusted, Unparsed: len(parseErrs) > 0}
+
+	breadth := substantiveFiles(res, sig.Rated, pairs, tree{baseFiles, baseSyms}, tree{headFiles, headSyms}, cfg.Tests)
+	scores.BreadthFiles = len(breadth)
+	contributors["breadthFiles"] = fileRefs(breadth)
+	modules := symbols.Modules(breadth, baseSyms, headSyms)
+	nModules := len(modules)
+	scores.BreadthModules = &nModules
+	contributors["breadthModules"] = moduleRefs(modules)
+
+	lines, lineContributors := metrics.LinesAdded(res, baseFiles, headFiles, func(p string) bool { return !cfg.Tests.Match(p) })
+	scores.LinesAdded = lines
+	contributors["linesAdded"] = lineContributors
+
+	files, uncovered := coverage(others, cfg)
+	scores.UncoveredFiles = len(uncovered)
+	contributors["uncoveredFiles"] = fileRefs(uncovered)
+	for _, fc := range res.Files {
+		files = append(files, &fileSummary{Path: fc.Path, Kind: string(fc.Kind), Coverage: coverageAnalyzed})
+	}
+	sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
+
+	changedPaths := make([]string, len(files))
+	var always []string
+	for i, f := range files {
+		changedPaths[i] = f.Path
+		if cfg.AlwaysReview.Match(f.Path) {
+			always = append(always, f.Path)
+		}
+	}
+	contributors["alwaysReview"] = fileRefs(always)
+
+	facts := eval.Facts{Unparsed: len(parseErrs) > 0, AlwaysReview: len(always) > 0}
+	gate, overrides := cfg.GateFor(changedPaths)
 	d := eval.Evaluate(scores, facts, gate)
 
 	verdict := verdictNoReview
@@ -253,11 +310,10 @@ func analyze(base, head string, gate eval.Gate, trusted bool, exclude *parse.Exc
 		Scores:         scores,
 		Facts:          facts,
 		Gate:           gate,
+		Overrides:      overrides,
 		Contributors:   contributors,
 		ParseErrors:    parseErrs,
-	}
-	for _, fc := range res.Files {
-		rep.Files = append(rep.Files, &fileSummary{Path: fc.Path, Kind: string(fc.Kind)})
+		Files:          files,
 	}
 	return rep, d.RequiresReview, nil
 }

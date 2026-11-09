@@ -13,8 +13,7 @@ review of a change no caller can observe.
 - The newer measures (cognitive complexity, significance, blast radius)
   compare base and head symbol by symbol, pairing declarations across files
   within a module. The original path-based differ stays as it is for edit
-  depth and file breadth, whose values are frozen: changing how it pairs
-  files would change them.
+  depth, which is reported but off in the default gate (ADR 0003).
 - The same module scope is the first resolution tier when building the call
   graph for the affected set.
 - Every supported language gets real module identity at launch, including

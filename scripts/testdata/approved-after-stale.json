@@ -1,0 +1,2 @@
+[{"id": 1, "state": "APPROVED", "user": {"login": "alice"}, "commit_id": "older"},
+ {"id": 2, "state": "APPROVED", "user": {"login": "alice"}, "commit_id": "head"}]

@@ -106,7 +106,7 @@ func alignNodes(fc *model.FileChange, a, b *model.Node) {
 	if aligned(a, b) {
 		return // structurally identical; whole subtree unchanged
 	}
-	record(fc, a, model.KindModify)
+	record(fc, a, model.KindModify, b.Line)
 
 	aByKey := indexByKey(a.Children)
 	bByKey := indexByKey(b.Children)
@@ -115,12 +115,12 @@ func alignNodes(fc *model.FileChange, a, b *model.Node) {
 		if match := findMatch(ak, bByKey); match != nil {
 			alignNodes(fc, ak, match)
 		} else {
-			record(fc, ak, model.KindDelete)
+			record(fc, ak, model.KindDelete, b.Line)
 		}
 	}
 	for _, bk := range b.Children {
 		if findMatch(bk, aByKey) == nil {
-			record(fc, bk, model.KindInsert)
+			record(fc, bk, model.KindInsert, bk.Line)
 		}
 	}
 }
@@ -148,19 +148,20 @@ func indexByKey(nodes []*model.Node) map[string][]*model.Node {
 }
 
 // record appends a node change to the file change, using its classification.
-func record(fc *model.FileChange, n *model.Node, kind model.ChangeKind) {
+func record(fc *model.FileChange, n *model.Node, kind model.ChangeKind, line int) {
 	fc.Changes = append(fc.Changes, &model.NodeChange{
 		Kind:  kind,
 		Type:  n.Type,
 		Name:  n.Name,
 		Depth: n.Depth,
+		Line:  line,
 	})
 }
 
 // collectChanges records every node in a subtree as a single kind (used for
 // fully-inserted or fully-deleted files).
 func collectChanges(fc *model.FileChange, n *model.Node, kind model.ChangeKind) {
-	record(fc, n, kind)
+	record(fc, n, kind, n.Line)
 	for _, c := range n.Children {
 		collectChanges(fc, c, kind)
 	}

@@ -227,8 +227,8 @@ func instanceToScenario(inst Instance) (Scenario, error) {
 			s.Fields[f.Label] = mustInt(v)
 		}
 	}
-	for _, req := range []string{"edit_depth", "depth_total", "breadth_files",
-		"epsilon_trivial", "unparsed", "analysis_failed", "trusted"} {
+	for _, req := range []string{"edit_depth", "breadth_files", "lines_added",
+		"uncovered_files", "unparsed", "always_review"} {
 		if _, ok := s.Fields[req]; !ok {
 			return Scenario{}, fmt.Errorf("instance has no value for %s", req)
 		}
@@ -245,24 +245,26 @@ func mustInt(s string) int {
 }
 
 // goFields maps Alloy field labels to the eval struct field they set, and how
-// to render the value: "int", "*int", "*level" or "bool".
+// to render the value: "int", "*int", "*level", "bool", or "hundreds" and
+// "*hundreds" for counts the scenarios write in hundreds to fit their scope.
 var goFields = []struct{ label, owner, field, kind string }{
 	{"edit_depth", "scores", "EditDepth", "int"},
-	{"depth_total", "scores", "DepthTotal", "int"},
 	{"breadth_files", "scores", "BreadthFiles", "int"},
+	{"lines_added", "scores", "LinesAdded", "hundreds"},
+	{"uncovered_files", "scores", "UncoveredFiles", "int"},
 	{"breadth_modules", "scores", "BreadthModules", "*int"},
 	{"cog_delta", "scores", "CogDelta", "*int"},
 	{"new_function_complexity", "scores", "NewFunctionComplexity", "*int"},
 	{"significance", "scores", "Significance", "*level"},
 	{"called_significance", "scores", "CalledSignificance", "*level"},
 	{"blast_radius", "scores", "BlastRadius", "*int"},
-	{"trusted", "facts", "Trusted", "bool"},
 	{"unparsed", "facts", "Unparsed", "bool"},
-	{"analysis_failed", "facts", "AnalysisFailed", "bool"},
+	{"always_review", "facts", "AlwaysReview", "bool"},
 	{"theta_depth", "gate", "ThetaDepth", "*int"},
 	{"theta_breadth", "gate", "ThetaBreadth", "*int"},
-	{"epsilon_trivial", "gate", "EpsilonTrivial", "int"},
 	{"theta_modules", "gate", "ThetaModules", "*int"},
+	{"theta_lines", "gate", "ThetaLines", "*hundreds"},
+	{"theta_uncovered", "gate", "ThetaUncovered", "*int"},
 	{"theta_cog", "gate", "ThetaCog", "*int"},
 	{"theta_new_function", "gate", "ThetaNewFunction", "*int"},
 	{"theta_significance", "gate", "ThetaSignificance", "*level"},
@@ -284,8 +286,12 @@ func literal(s Scenario, owner, typ string) string {
 		switch f.kind {
 		case "int":
 			parts = append(parts, fmt.Sprintf("%s: %d", f.field, v))
+		case "hundreds":
+			parts = append(parts, fmt.Sprintf("%s: %d", f.field, v*100))
 		case "*int":
 			parts = append(parts, fmt.Sprintf("%s: eval.On(%d)", f.field, v))
+		case "*hundreds":
+			parts = append(parts, fmt.Sprintf("%s: eval.On(%d)", f.field, v*100))
 		case "*level":
 			parts = append(parts, fmt.Sprintf("%s: eval.LevelOn(%d)", f.field, v))
 		case "bool":

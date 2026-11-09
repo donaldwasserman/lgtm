@@ -2,6 +2,7 @@ package symbols
 
 import (
 	"path"
+	"slices"
 	"strings"
 	"unicode"
 
@@ -76,6 +77,28 @@ func goSymbols(f *model.File) []*Symbol {
 				}
 				out = append(out, t)
 			}
+		case "const_declaration", "var_declaration":
+			for _, spec := range goSpecs(n) {
+				for _, c := range spec.Children {
+					if c.Field == "name" && c.Text != "_" {
+						out = append(out, newSymbol(f, mod, "", c.Text, KindConst, goExported(c.Text), spec))
+					}
+				}
+			}
+		}
+	}
+	return out
+}
+
+// goSpecs lists a const or var declaration's specs, grouped or not.
+func goSpecs(n *model.Node) []*model.Node {
+	var out []*model.Node
+	for _, c := range n.Children {
+		switch c.Type {
+		case "const_spec", "var_spec":
+			out = append(out, c)
+		case "var_spec_list":
+			out = append(out, goSpecs(c)...)
 		}
 	}
 	return out
@@ -152,6 +175,20 @@ func pythonSymbols(f *model.File) []*Symbol {
 					s.Members = walk(b, join(container, name), exported)
 				}
 				out = append(out, s)
+			case "expression_statement":
+				if container != "" || len(decl.Children) != 1 || decl.Children[0].Type != "assignment" {
+					continue
+				}
+				a := decl.Children[0]
+				left := field(a, "left")
+				if left == nil || left.Type != "identifier" || left.Text == "__all__" {
+					continue // __all__ is read as export status
+				}
+				exp := pythonPublic(left.Text)
+				if all != nil {
+					exp = all[left.Text]
+				}
+				out = append(out, newSymbol(f, mod, "", left.Text, KindConst, exp, a))
 			}
 		}
 		return out
@@ -229,6 +266,10 @@ func rubySymbols(f *model.File) []*Symbol {
 				out = append(out, s)
 			case "method", "singleton_method":
 				addMethod(n, visibility)
+			case "assignment":
+				if left := field(n, "left"); left != nil && left.Type == "constant" {
+					out = append(out, newSymbol(f, moduleOrMain(mod), "", left.Text, KindConst, modExported, n))
+				}
 			case "identifier":
 				switch n.Text {
 				case "private", "protected", "public":
@@ -363,10 +404,15 @@ func jsDeclaration(f *model.File, mod string, decl *model.Node, exported bool, n
 				continue
 			}
 			v := field(d, "value")
-			if v == nil || !(jsIsFunction(v.Type) || v.Type == "class") {
+			nameNode := field(d, "name")
+			if v == nil || nameNode == nil || nameNode.Type != "identifier" {
+				continue // no value, or a destructuring pattern
+			}
+			dn := nameNode.Text
+			if !jsIsFunction(v.Type) && v.Type != "class" {
+				out = append(out, newSymbol(f, mod, "", dn, KindConst, exported || names[dn], d))
 				continue
 			}
-			dn := fieldText(d, "name")
 			kind := KindFunc
 			if v.Type == "class" {
 				kind = KindType
@@ -489,11 +535,29 @@ func javaSymbols(f *model.File) []*Symbol {
 				out = append(out, newSymbol(f, mod, container, name, KindMethod, exported, n))
 			case "enum_body_declarations":
 				out = append(out, walk(n, container, containerExported, inInterface)...)
+			case "field_declaration":
+				if !javaConstant(n) {
+					continue
+				}
+				if d := field(n, "declarator"); d != nil {
+					out = append(out, newSymbol(f, mod, container, fieldText(d, "name"), KindConst, exported, n))
+				}
 			}
 		}
 		return out
 	}
 	return walk(f.Root, "", true, false)
+}
+
+// javaConstant reports a `static final` field.
+func javaConstant(n *model.Node) bool {
+	for _, c := range n.Children {
+		if c.Type == "modifiers" {
+			w := strings.Fields(c.Text)
+			return slices.Contains(w, "static") && slices.Contains(w, "final")
+		}
+	}
+	return false
 }
 
 func javaVisible(n *model.Node) bool {
@@ -528,6 +592,8 @@ func rustSymbols(f *model.File) []*Symbol {
 				out = append(out, newSymbol(f, mod, "", name, KindFunc, exported, n))
 			case "struct_item", "enum_item", "union_item", "type_item":
 				out = append(out, newSymbol(f, mod, "", name, KindType, exported, n))
+			case "const_item", "static_item":
+				out = append(out, newSymbol(f, mod, "", name, KindConst, exported, n))
 			case "trait_item":
 				s := newSymbol(f, mod, "", name, KindType, exported, n)
 				if b := field(n, "body"); b != nil {

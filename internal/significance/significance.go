@@ -134,10 +134,11 @@ func decompose(s *symbols.Symbol, l *lang) map[Part]string {
 	acc := map[Part][]string{}
 	add := func(p Part, n *model.Node) { acc[p] = append(acc[p], c.hash(n, nil)) }
 	callable := s.Kind == symbols.KindFunc || s.Kind == symbols.KindMethod
+	constant := s.Kind == symbols.KindConst
 	for _, ch := range s.Node.Children {
 		switch {
 		case c.skip[ch] || symbols.IsComment(ch.Type):
-		case ch.Field == "name":
+		case ch.Field == "name", constant && ch.Field == "left":
 			// identity, not content
 		case l.signature[ch.Field] || l.signatureTypes[ch.Type]:
 			add(Signature, ch)
@@ -151,10 +152,12 @@ func decompose(s *symbols.Symbol, l *lang) map[Part]string {
 			if other != "" {
 				acc[Signature] = append(acc[Signature], other)
 			}
+		case constant && ch.Field != "type":
+			add(Statement, ch) // the constant's value
 		case callable && isBody(ch, l):
 			c.body(ch, acc)
 		case !callable && ch.Field == "type" && !l.bodyTypes[ch.Type]:
-			add(Signature, ch) // a type alias or defined type's target
+			add(Signature, ch) // a type alias or defined type's target, a constant's type
 		case !callable && isBody(ch, l):
 			c.typeBody(ch, acc)
 		default:

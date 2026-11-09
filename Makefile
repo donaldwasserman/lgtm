@@ -123,13 +123,13 @@ test:
 	$(GO) test ./...
 
 # Exercise the GitHub Action's own logic - the approval reduction and the
-# trusted-contributor policy - against saved payloads. Every jq program is
-# extracted from action.yml, so these cannot drift from what the action runs.
+# check summary - against saved payloads. Every jq program is extracted from
+# action.yml, so these cannot drift from what the action runs.
 test-action:
 	@echo "=== Action approval logic ==="
 	./scripts/test-approval.sh
-	@echo "=== Action trust logic ==="
-	./scripts/test-trust.sh
+	@echo "=== Action check summary ==="
+	./scripts/test-summary.sh
 	@echo "=== Action image selection ==="
 	./scripts/test-image.sh
 	@echo "=== Action manifest ==="

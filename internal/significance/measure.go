@@ -21,8 +21,11 @@ func (r Rated) Symbol() *symbols.Symbol { return r.Pair.Base }
 type Contributor struct {
 	Symbol string     `json:"symbol"`
 	File   string     `json:"file"`
+	Line   int        `json:"line"`
 	Level  eval.Level `json:"level"`
 	Parts  []Part     `json:"parts"`
+	// Deleted: the symbol no longer exists, so File and Line are its old place.
+	Deleted bool `json:"deleted,omitempty"`
 }
 
 // Result holds the significance score and the symbols behind it.
@@ -79,8 +82,12 @@ func (r Result) Contributors() []Contributor {
 		if len(out) == TopN || x.Level == eval.None {
 			break
 		}
-		out = append(out, Contributor{Symbol: x.Symbol().Display(), File: x.Symbol().File,
-			Level: x.Level, Parts: x.Parts})
+		s, deleted := x.Pair.Head, false
+		if s == nil {
+			s, deleted = x.Symbol(), true
+		}
+		out = append(out, Contributor{Symbol: s.Display(), File: s.File, Line: s.Line(),
+			Level: x.Level, Parts: x.Parts, Deleted: deleted})
 	}
 	return out
 }

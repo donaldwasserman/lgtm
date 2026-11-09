@@ -26,4 +26,6 @@ type NodeChange struct {
 	Type  string     `json:"type"`
 	Name  string     `json:"name,omitempty"`
 	Depth int        `json:"depth"`
+	// Line is where the change sits on the head side when it has one there.
+	Line int `json:"line,omitempty"`
 }
