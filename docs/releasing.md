@@ -17,7 +17,7 @@ Versions look like `v1.4.2` (major.minor.patch).
 - **Minor** (`v1.4 → v1.5`): new options or languages; existing setups behave the same.
 - **Major** (`v1 → v2`): anything that can break someone's setup or flip a result:
   - removing or renaming an input, output, or flag
-  - changing a default (thresholds, `check-name`, `trust-mode`)
+  - changing a default (thresholds, `check-name`, the built-in path lists)
   - changing the JSON report or exit codes
   - changing how an existing language is measured
 

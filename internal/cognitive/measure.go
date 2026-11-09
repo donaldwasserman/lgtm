@@ -10,6 +10,7 @@ import (
 type Contributor struct {
 	Symbol string `json:"symbol"`
 	File   string `json:"file"`
+	Line   int    `json:"line"`
 	Value  int    `json:"value"`
 }
 
@@ -63,7 +64,7 @@ func Measure(pairs []symbols.Pair) Result {
 }
 
 func contributor(s *symbols.Symbol, v int) Contributor {
-	return Contributor{Symbol: s.Display(), File: s.File, Value: v}
+	return Contributor{Symbol: s.Display(), File: s.File, Line: s.Line(), Value: v}
 }
 
 func top(cs []Contributor) []Contributor {

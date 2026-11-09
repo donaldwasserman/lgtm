@@ -27,11 +27,17 @@ one sig APPROVED, CHANGES_REQUESTED, DISMISSED, COMMENTED, PENDING extends Revie
 -- dismissed approval stops counting instead of being invisible.
 fun verdictKinds: set ReviewState { APPROVED + CHANGES_REQUESTED + DISMISSED }
 
-sig Reviewer {}
+-- canWrite: the reviewer has write access to the repository. Anyone else's
+-- review carries no weight, either way.
+sig Reviewer {
+  canWrite: one BOOL
+}
 
 sig Review {
   by: one Reviewer,
   verdict: one ReviewState,
+  -- The review was left on the pull request's current head commit.
+  onHead: one BOOL,
   -- Submission order, standing in for GitHub's monotonic review id.
   revId: one Int
 }
@@ -74,9 +80,10 @@ one sig Success, Failure, NoCheck extends Conclusion {}
 
 -- ---- the per-reviewer reduction ----
 
--- The verdict-carrying reviews r left on g.
+-- The verdict-carrying reviews r left on g. A reviewer without write access
+-- has none.
 fun verdicts[g: Evaluation, r: Reviewer]: set Review {
-  { rv: g.reviews | rv.by = r and rv.verdict in verdictKinds }
+  { rv: g.reviews | rv.by = r and rv.verdict in verdictKinds and r.canWrite = TRUE }
 }
 
 -- r's most recent verdict on g, if r left one at all.
@@ -84,7 +91,11 @@ fun latest[g: Evaluation, r: Reviewer]: lone Review {
   { rv: verdicts[g, r] | no rv2: verdicts[g, r] | gt[int[rv2.revId], int[rv.revId]] }
 }
 
-pred approvedBy[g: Evaluation, r: Reviewer] { latest[g, r].verdict = APPROVED }
+-- An approval vouches for one commit: a later push leaves it standing as the
+-- reviewer's verdict, but no longer as an approval of this code.
+pred approvedBy[g: Evaluation, r: Reviewer] {
+  latest[g, r].verdict = APPROVED and latest[g, r].onHead = TRUE
+}
 pred blockedBy[g: Evaluation, r: Reviewer]  { latest[g, r].verdict = CHANGES_REQUESTED }
 
 pred hasApproval[g: Evaluation] { some r: Reviewer | approvedBy[g, r] }

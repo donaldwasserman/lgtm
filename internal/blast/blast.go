@@ -200,8 +200,11 @@ func Affected(callers [][]int, changed []int, k int) []int {
 type Contributor struct {
 	Symbol string `json:"symbol"`
 	File   string `json:"file"`
+	Line   int    `json:"line"`
 	// Value is the number of symbols that reference it directly.
 	Value int `json:"value"`
+	// Deleted: the symbol no longer exists, so File and Line are its old place.
+	Deleted bool `json:"deleted,omitempty"`
 }
 
 // Result is the blast radius of a set of changed base symbols.
@@ -213,8 +216,10 @@ type Result struct {
 // TopN bounds the contributor list in the report.
 const TopN = 5
 
-// Measure computes the blast radius of the changed base symbols.
-func Measure(g *Graph, changed []*symbols.Symbol) Result {
+// Measure computes the blast radius of the changed base symbols. head maps a
+// base symbol to its head-side self, for the report; a symbol with no entry
+// has been deleted.
+func Measure(g *Graph, changed []*symbols.Symbol, head map[*symbols.Symbol]*symbols.Symbol) Result {
 	var idx []int
 	isChanged := map[int]bool{}
 	for _, s := range changed {
@@ -231,8 +236,11 @@ func Measure(g *Graph, changed []*symbols.Symbol) Result {
 	}
 	for _, i := range idx {
 		if n := len(g.callers[i]); n > 0 {
-			s := g.Syms[i]
-			r.Contributors = append(r.Contributors, Contributor{Symbol: s.Display(), File: s.File, Value: n})
+			s, deleted := head[g.Syms[i]], false
+			if s == nil {
+				s, deleted = g.Syms[i], true
+			}
+			r.Contributors = append(r.Contributors, Contributor{Symbol: s.Display(), File: s.File, Line: s.Line(), Value: n, Deleted: deleted})
 		}
 	}
 	sort.SliceStable(r.Contributors, func(i, j int) bool {

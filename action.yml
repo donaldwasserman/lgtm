@@ -49,77 +49,64 @@ inputs:
       local tag.
     required: false
     default: ''
-  theta-depth:
-    description: 'Edit depth at which review is required, or "off".'
-    required: false
-    default: '7'
-  theta-breadth:
+  preset:
     description: >-
-      Number of files at which review is required (only when total depth is
-      above epsilon-trivial), or "off".
+      Gate to start from, "balanced" or "strict". Empty uses the preset in
+      .lgtm.yml, or balanced when there is none.
     required: false
-    default: '6'
-  epsilon-trivial:
-    description: 'Total depth at or below which a wide change counts as trivial.'
+    default: ''
+  theta-depth:
+    description: 'Edit depth at which review is required, or "off". Empty uses the preset, which leaves it off.'
     required: false
-    default: '1'
+    default: ''
+  theta-breadth:
+    description: 'Non-test files with a substantive change at which review is required, or "off". Empty uses the preset.'
+    required: false
+    default: ''
   theta-modules:
-    description: 'Number of language modules at which review is required, or "off".'
+    description: 'Packages those files belong to at which review is required, or "off". Empty uses the preset.'
     required: false
-    default: 'off'
+    default: ''
+  theta-lines:
+    description: 'Non-blank lines added to non-test source files at which review is required, or "off". Empty uses the preset.'
+    required: false
+    default: ''
+  theta-uncovered:
+    description: >-
+      Changed files no measure can look at (and uncovered-ignore in .lgtm.yml
+      does not list) at which review is required, or "off". Empty uses the
+      preset.
+    required: false
+    default: ''
   theta-cog:
     description: >-
       Increase in one existing function's cognitive complexity at which
-      review is required, or "off".
+      review is required, or "off". Empty uses the preset.
     required: false
-    default: '5'
+    default: ''
   theta-new-function:
-    description: 'Cognitive complexity of one new function at which review is required, or "off".'
+    description: 'Cognitive complexity of one new function at which review is required, or "off". Empty uses the preset.'
     required: false
-    default: '25'
+    default: ''
   theta-significance:
     description: >-
       Significance level (low, medium, high, crucial) at which review is
       required, or "off". While on, an exported signature change to a symbol
-      that something calls also requires review.
+      that something calls also requires review. Empty uses the preset.
     required: false
-    default: 'crucial'
+    default: ''
   theta-blast:
-    description: 'Blast radius (callers within 3 hops of changed symbols) at which review is required, or "off".'
+    description: 'Blast radius (callers within 3 hops of changed symbols) at which review is required, or "off". Empty uses the preset.'
     required: false
-    default: '50'
+    default: ''
   exclude:
     description: >-
       Globs of paths to leave out of the scan, one per line, relative to the
       repository root (e.g. "**/*.pb.go"). A pattern without a slash matches
-      at any depth; "**" spans directories.
+      at any depth; "**" spans directories; "!entry" removes a built-in entry
+      such as "!build".
     required: false
     default: ''
-  trust-mode:
-    description: >-
-      How the trusted-contributor exemption is decided: "none" (nobody is
-      exempt), "top-percent" or "top-count" (ranked by all-time commit count
-      from the contributors API), or "codeowners" (the author owns at least one
-      changed file). Exactly one mode applies.
-    required: false
-    default: 'none'
-  trust-percent:
-    description: >-
-      Percentile cutoff for trust-mode "top-percent". Rounds up, so the top 20%
-      of three contributors is one person. Contributors tied with the last one
-      inside the cut are also included.
-    required: false
-    default: '20'
-  trust-count:
-    description: 'Rank cutoff for trust-mode "top-count". Ties at the cutoff are included.'
-    required: false
-    default: '10'
-  author:
-    description: >-
-      Login of the pull request author. Defaults to the PR author rather than
-      github.actor, which on a pull_request_review event is the reviewer.
-    required: false
-    default: ${{ github.event.pull_request.user.login }}
   check-name:
     description: >-
       Name of the check run this action publishes. This is the exact string you
@@ -203,220 +190,6 @@ runs:
           docker pull "$IMAGE"
         fi
 
-    # Resolves the trusted-contributor exemption before lgtm runs, since lgtm
-    # takes only the resulting bool. Every failure path here degrades to "not
-    # trusted" with a warning: the safe direction is an extra review, never a
-    # silent exemption.
-    - name: 'Resolve trusted contributor'
-      id: trust
-      if: ${{ inputs.trust-mode != 'none' }}
-      shell: bash
-      env:
-        GH_TOKEN: ${{ inputs.github-token }}
-        REPO: ${{ github.repository }}
-        PR: ${{ github.event.pull_request.number }}
-        # Directory mode names the head tree; in git mode the checkout is the
-        # head tree (actions/checkout at the head SHA), as for LGTM_REPO below.
-        HEAD_DIR: ${{ inputs.head || inputs.repo || github.workspace }}
-        MODE: ${{ inputs.trust-mode }}
-        AUTHOR: ${{ inputs.author }}
-        TRUST_PERCENT: ${{ inputs.trust-percent }}
-        TRUST_COUNT: ${{ inputs.trust-count }}
-      run: |
-        set -uo pipefail
-
-        # Ranks contributors by all-time commit count and reports whether the
-        # author falls inside the cut. $mode is top-percent or top-count.
-        #
-        # The cutoff rounds UP so a mode the user explicitly enabled is not
-        # silently inert on a small repo, and it expands to include everyone
-        # tied with the last contributor inside it - neither the contributors
-        # API nor git shortlog specifies tie ordering, and a merge gate must
-        # not flip on an unspecified sort.
-        # shellcheck disable=SC2016  # $author/$mode/$value are jq variables, not shell
-        rank_filter='
-          [ .[] | select(.type == "User") ]
-          | sort_by(-.contributions, (.login | ascii_downcase))
-          | . as $ranked
-          | ($ranked | length) as $n
-          | ($author | ascii_downcase) as $who
-          | (if $n == 0 then 0
-             elif $mode == "top-count" then (if $value > $n then $n else $value end)
-             elif $value <= 0 then 0
-             elif $value >= 100 then $n
-             else (((($n * $value) + 99) / 100) | floor)
-             end) as $k
-          | (if $k <= 0 then 0
-             elif $k >= $n then $n
-             else ($ranked[$k - 1].contributions) as $edge
-                  | ([ $ranked[] | select(.contributions >= $edge) ] | length)
-             end) as $cut
-          | ([ $ranked[] | .login | ascii_downcase ] | index($who)) as $idx
-          | { trusted: ($cut > 0 and $idx != null and $idx < $cut),
-              rank: (if $idx == null then 0 else $idx + 1 end),
-              cutoff: $cut,
-              contributors: $n }
-        '
-
-        # Parses CODEOWNERS text and reports which changed paths the author
-        # owns. Ownership is LAST MATCHING RULE WINS: given "* @alice" then
-        # "*.go @bob", the owner of x.go is bob alone. Treating any matching
-        # rule as ownership would trust alice for every Go file, which is
-        # exactly the over-trust this gate must not produce.
-        #
-        # Glob support is the documented subset: * within a segment, ? single
-        # char, ** across segments, a leading / or any embedded / anchors at
-        # the repo root, a trailing / means the directory and everything under
-        # it, and a pattern with no / matches a basename at any depth.
-        # shellcheck disable=SC2016  # $text/$paths/$author/$teams are jq variables, not shell
-        codeowners_filter='
-          def esc: gsub("(?<c>[.+^$(){}|\\[\\]\\\\])"; "\\" + .c);
-          def glob2re:
-            esc
-            | gsub("/\\*\\*/"; "\u0001")
-            | gsub("\\*\\*"; "\u0000")
-            | gsub("\\*"; "[^/]*")
-            | gsub("\\?"; "[^/]")
-            | gsub("\u0000"; ".*")
-            | gsub("\u0001"; "/(?:.*/)?");
-          def rule_re($p):
-            ($p | endswith("/")) as $isdir
-            | ($p | sub("^/"; "") | sub("/$"; "")) as $body
-            | ($body | test("/")) as $anchored
-            | ($body | glob2re) as $re
-            | if $isdir then "^" + $re + "/.*$"
-              elif $anchored then "^" + $re + "$"
-              else "^(?:.*/)?" + $re + "$"
-              end;
-          def owner_matches($o):
-            ($o | ascii_downcase) as $lo
-            | ($lo == ("@" + ($author | ascii_downcase)))
-              or (($teams[$lo] // []) | index($author | ascii_downcase)) != null;
-          ($text | split("\n")
-            | map(sub("#.*$"; "") | sub("^\\s+"; "") | sub("\\s+$"; ""))
-            | map(select(length > 0))
-            | map(select(startswith("[") or startswith("^[") or startswith("!") | not))
-            | map(split("\\s+"; "") | map(select(length > 0)))
-            | map(select(length > 0))
-            | map({ pattern: .[0], re: rule_re(.[0]), owners: .[1:] })
-          ) as $rules
-          | [ $paths[]
-              | . as $path
-              | ([ $rules[] | . as $r | select($path | test($r.re)) ] | last) as $rule
-              | select($rule != null and ([ $rule.owners[] | select(owner_matches(.)) ] | length) > 0)
-              | $path ] as $owned
-          | { trusted: ($owned | length > 0),
-              ownedFiles: $owned,
-              rules: ($rules | length) }
-        '
-
-        trusted=false
-        reason=""
-
-        if [ -z "$AUTHOR" ]; then
-          echo "::warning::no pull request author available; treating as not trusted"
-          {
-            echo "trusted=false"
-            echo "reason=no author available"
-          } >> "$GITHUB_OUTPUT"
-          exit 0
-        fi
-
-        case "$MODE" in
-          top-percent|top-count)
-            if [ "$MODE" = "top-percent" ]; then value="$TRUST_PERCENT"; else value="$TRUST_COUNT"; fi
-
-            contributors="$RUNNER_TEMP/lgtm-contributors.json"
-            # --paginate emits one array per page, so stream the elements and
-            # slurp them back into a single array.
-            if gh api "repos/$REPO/contributors?per_page=100" --paginate --jq '.[]' \
-                 | jq -s '.' > "$contributors" && [ -s "$contributors" ]; then
-              if result=$(jq -c --arg author "$AUTHOR" --arg mode "$MODE" --argjson value "$value" \
-                   "$rank_filter" "$contributors"); then
-                trusted=$(echo "$result" | jq -r '.trusted')
-                reason=$(echo "$result" | jq -r '
-                  if .rank == 0 then "author is not among the \(.contributors) ranked contributors"
-                  else "rank \(.rank) of \(.contributors); the cut covers \(.cutoff)" end')
-              else
-                echo "::warning::could not rank contributors; treating as not trusted"
-                reason="contributor ranking failed"
-              fi
-            else
-              echo "::warning::could not read the contributors API; treating as not trusted"
-              reason="contributors API unavailable"
-            fi
-            ;;
-
-          codeowners)
-            file=""
-            for candidate in .github/CODEOWNERS CODEOWNERS docs/CODEOWNERS; do
-              if [ -f "$HEAD_DIR/$candidate" ]; then file="$candidate"; break; fi
-            done
-
-            if [ -z "$file" ]; then
-              echo "::warning::no CODEOWNERS file in the head tree; treating as not trusted"
-              reason="no CODEOWNERS file found"
-            else
-              # The PR's real file list, not lgtm's files[] - lgtm only reports
-              # files it could parse, so ownership over .md or .yml paths would
-              # be invisible to it.
-              paths="$RUNNER_TEMP/lgtm-changed.json"
-              if ! gh api "repos/$REPO/pulls/$PR/files" --paginate --jq '.[].filename' \
-                   | jq -Rs 'split("\n") | map(select(length > 0))' > "$paths"; then
-                echo "::warning::could not list the pull request files; treating as not trusted"
-                reason="could not list changed files"
-              else
-                # Expand any @org/team named in the file, so team ownership
-                # works as written. Needs read:org, which the default token
-                # lacks for org teams - hence the warning rather than silence.
-                teams='{}'
-                # shellcheck disable=SC2013  # the pattern admits no whitespace, so word splitting is correct
-                for team in $(grep -oE '@[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+' "$HEAD_DIR/$file" | sort -u); do
-                  org="${team#@}"; org="${org%%/*}"
-                  slug="${team##*/}"
-                  if members=$(gh api "orgs/$org/teams/$slug/members" --paginate --jq '.[].login' 2>/dev/null); then
-                    teams=$(echo "$teams" | jq -c --arg k "$(echo "$team" | tr '[:upper:]' '[:lower:]')" \
-                      --argjson v "$(printf '%s' "$members" | jq -Rs 'split("\n") | map(select(length > 0) | ascii_downcase)')" \
-                      '. + {($k): $v}')
-                  else
-                    echo "::warning::could not expand $team (needs read:org); its members are not trusted"
-                    unresolved="${unresolved:-}$team "
-                  fi
-                done
-
-                if result=$(jq -n -c --arg author "$AUTHOR" --argjson teams "$teams" \
-                     --rawfile text "$HEAD_DIR/$file" --argjson paths "$(cat "$paths")" \
-                     "$codeowners_filter"); then
-                  trusted=$(echo "$result" | jq -r '.trusted')
-                  reason=$(echo "$result" | jq -r '"author owns \(.ownedFiles | length) changed file(s) per '"$file"'"')
-                else
-                  echo "::warning::could not evaluate CODEOWNERS; treating as not trusted"
-                  reason="CODEOWNERS evaluation failed"
-                fi
-                if [ -n "${unresolved:-}" ]; then
-                  reason="$reason; unresolved teams: ${unresolved% }"
-                fi
-              fi
-            fi
-            ;;
-
-          *)
-            echo "::error::unknown trust-mode '$MODE' (expected none, top-percent, top-count or codeowners)"
-            exit 1
-            ;;
-        esac
-
-        # Anything other than a literal "true" is not trust. This is the last
-        # line of defence against an empty or malformed intermediate result
-        # reaching the gate as something truthy.
-        [ "$trusted" = "true" ] || trusted=false
-
-        echo "trust-mode=$MODE trusted=$trusted ($reason)"
-        {
-          echo "trusted=$trusted"
-          echo "reason=$reason"
-        } >> "$GITHUB_OUTPUT"
-
     # Records the decision without ever exiting non-zero, so the check run is
     # still published when lgtm fails. The job's own failure is decided by the
     # final step instead.
@@ -430,16 +203,17 @@ runs:
         LGTM_REPO: ${{ inputs.repo || github.workspace }}
         LGTM_BASE: ${{ inputs.base }}
         LGTM_HEAD: ${{ inputs.head }}
+        LGTM_PRESET: ${{ inputs.preset }}
         LGTM_THETA_DEPTH: ${{ inputs.theta-depth }}
         LGTM_THETA_BREADTH: ${{ inputs.theta-breadth }}
-        LGTM_EPSILON_TRIVIAL: ${{ inputs.epsilon-trivial }}
         LGTM_THETA_MODULES: ${{ inputs.theta-modules }}
+        LGTM_THETA_LINES: ${{ inputs.theta-lines }}
+        LGTM_THETA_UNCOVERED: ${{ inputs.theta-uncovered }}
         LGTM_THETA_COG: ${{ inputs.theta-cog }}
         LGTM_THETA_NEW_FUNCTION: ${{ inputs.theta-new-function }}
         LGTM_THETA_SIGNIFICANCE: ${{ inputs.theta-significance }}
         LGTM_THETA_BLAST: ${{ inputs.theta-blast }}
         LGTM_EXCLUDE: ${{ inputs.exclude }}
-        LGTM_TRUSTED_INPUT: ${{ steps.trust.outputs.trusted == 'true' }}
       run: |
         set -uo pipefail
 
@@ -465,6 +239,18 @@ runs:
           [ -n "${pat//[[:space:]]/}" ] && excludes+=(--exclude "$pat")
         done <<< "$LGTM_EXCLUDE"
 
+        # Only what the workflow set: anything else comes from .lgtm.yml in
+        # the base tree, or the preset.
+        settings=()
+        [ -n "$LGTM_PRESET" ] && settings+=(--preset "$LGTM_PRESET")
+        for pair in "depth=$LGTM_THETA_DEPTH" "breadth=$LGTM_THETA_BREADTH" \
+                    "modules=$LGTM_THETA_MODULES" "lines=$LGTM_THETA_LINES" \
+                    "uncovered=$LGTM_THETA_UNCOVERED" "cog=$LGTM_THETA_COG" \
+                    "new-function=$LGTM_THETA_NEW_FUNCTION" \
+                    "significance=$LGTM_THETA_SIGNIFICANCE" "blast=$LGTM_THETA_BLAST"; do
+          [ -n "${pair#*=}" ] && settings+=("--theta-${pair%%=*}" "${pair#*=}")
+        done
+
         report="$RUNNER_TEMP/lgtm-report.json"
         rm -f "$report"
         if [ -z "$mode" ]; then
@@ -473,16 +259,8 @@ runs:
         else
           "${args[@]}" \
             --output /out/lgtm-report.json \
-            --theta-depth "$LGTM_THETA_DEPTH" \
-            --theta-breadth "$LGTM_THETA_BREADTH" \
-            --epsilon-trivial "$LGTM_EPSILON_TRIVIAL" \
-            --theta-modules "$LGTM_THETA_MODULES" \
-            --theta-cog "$LGTM_THETA_COG" \
-            --theta-new-function "$LGTM_THETA_NEW_FUNCTION" \
-            --theta-significance "$LGTM_THETA_SIGNIFICANCE" \
-            --theta-blast "$LGTM_THETA_BLAST" \
-            "${excludes[@]+"${excludes[@]}"}" \
-            --trusted="$LGTM_TRUSTED_INPUT" && code=0 || code=$?
+            "${settings[@]+"${settings[@]}"}" \
+            "${excludes[@]+"${excludes[@]}"}" && code=0 || code=$?
         fi
 
         echo "exit-code=$code" >> "$GITHUB_OUTPUT"
@@ -514,6 +292,7 @@ runs:
         GH_TOKEN: ${{ inputs.github-token }}
         PR: ${{ github.event.pull_request.number }}
         REPO: ${{ github.repository }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha }}
       run: |
         set -uo pipefail
 
@@ -525,17 +304,32 @@ runs:
           exit 0
         fi
 
+        # A review counts only from someone with write access: on a public
+        # repository anyone can leave an approving review. Failing to look a
+        # reviewer up means their review does not count.
+        writers='[]'
+        for login in $(jq -r '[ .[] | .user.login ] | unique | .[]' "$reviews"); do
+          permission=$(gh api "repos/$REPO/collaborators/$login/permission" --jq '.permission' 2>/dev/null) || permission=''
+          case "$permission" in
+            admin|write) writers=$(jq -c --arg l "$login" '. + [$l]' <<< "$writers") ;;
+          esac
+        done
+
         # Keep only reviews that carry a verdict, reduce to each reviewer's
         # most recent one, and judge on those. Without the per-author
         # reduction a reviewer who approves and later requests changes would
         # still read as approving. DISMISSED is retained so that a dismissed
-        # approval correctly stops counting.
-        states=$(jq -r '
+        # approval correctly stops counting. An approval vouches for one
+        # commit, so one left before the latest push reads as STALE; a request
+        # for changes stands until its author withdraws it.
+        states=$(jq -r --arg head "$HEAD_SHA" --argjson writers "$writers" '
           [ .[] | select(.state == "APPROVED"
                       or .state == "CHANGES_REQUESTED"
-                      or .state == "DISMISSED") ]
+                      or .state == "DISMISSED")
+                | select(.user.login as $u | $writers | index($u)) ]
           | group_by(.user.login)
-          | map(max_by(.id).state)
+          | map(max_by(.id))
+          | map(if .state == "APPROVED" and .commit_id != $head then "STALE" else .state end)
           | .[]
         ' "$reviews")
 
@@ -567,8 +361,6 @@ runs:
         DETAILS_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         REQUIRES_REVIEW: ${{ steps.evaluate.outputs.requires-review }}
         EXIT_CODE: ${{ steps.evaluate.outputs.exit-code }}
-        TRUST_MODE: ${{ inputs.trust-mode }}
-        TRUST_REASON: ${{ steps.trust.outputs.reason }}
         APPROVED: ${{ steps.approval.outputs.approved }}
         CHANGES_REQUESTED: ${{ steps.approval.outputs.changes-requested }}
       run: |
@@ -623,8 +415,8 @@ runs:
             {
               echo 'This change is above the review thresholds and has no approving review yet.'
               echo
-              echo 'The check clears itself: it turns green as soon as someone approves the'
-              echo 'pull request. No re-run is needed.'
+              echo 'The check clears itself: it turns green as soon as someone with write'
+              echo 'access approves the latest commit. No re-run is needed.'
             } > "$summary"
             ;;
           changes-requested)
@@ -655,49 +447,72 @@ runs:
             def th: if . == null then "off" else tostring end;
             def sc: if . == null then "unavailable" else tostring end;
             def fired($r): if (.reasons // [] | index($r)) then "**yes**" else "" end;
+            def where: if .file then "`\(.file)\(if .line then ":\(.line)" else "" end)`" else empty end;
+            def who: if .symbol then "`\(.symbol)`" else empty end;
+            def amount: (.value // .level) | if . == null then empty else "(\(.))" end;
+            def item: [who, where, amount] | join(" ");
             "",
             "| Measure | Score | Threshold | Requires review |",
             "| --- | --- | --- | --- |",
-            "| Edit depth | \(.scores.editDepth) | \(.gate.thetaDepth | th) | \(fired("edit-depth")) |",
-            "| Files touched | \(.scores.breadthFiles) | \(.gate.thetaBreadth | th), when total depth is over \(.gate.epsilonTrivial) (here \(.scores.depthTotal)) | \(fired("breadth-files")) |",
+            "| Files with substantive changes | \(.scores.breadthFiles) | \(.gate.thetaBreadth | th) | \(fired("breadth-files")) |",
             "| Modules touched | \(.scores.breadthModules | sc) | \(.gate.thetaModules | th) | \(fired("breadth-modules")) |",
+            "| Lines added | \(.scores.linesAdded) | \(.gate.thetaLines | th) | \(fired("lines-added")) |",
+            "| Uncovered files | \(.scores.uncoveredFiles) | \(.gate.thetaUncovered | th) | \(fired("uncovered-files")) |",
             "| Cognitive complexity increase | \(.scores.cogDelta | sc) | \(.gate.thetaCog | th) | \(fired("cog-delta")) |",
             "| New-function complexity | \(.scores.newFunctionComplexity | sc) | \(.gate.thetaNewFunction | th) | \(fired("new-function-complexity")) |",
             "| Significance | \(.scores.significance | sc) | \(.gate.thetaSignificance | th) | \(fired("significance")) |",
             "| Significance of changes with callers | \(.scores.calledSignificance | sc) | high, while significance is on | \(fired("called-exported-signature")) |",
             "| Blast radius | \(.scores.blastRadius | sc) | \(.gate.thetaBlast | th) | \(fired("blast-radius")) |",
+            "| Edit depth | \(.scores.editDepth) | \(.gate.thetaDepth | th) | \(fired("edit-depth")) |",
             "| New-code depth | \(.scores.newDepth) | never gated | |",
             "",
-            "Trusted contributor: \(.facts.trusted) (exempts every threshold). Unparsed files: \(.facts.unparsed). Analysis failed: \(.facts.analysisFailed). Either of the last two always requires review.",
+            "Unparsed files: \(.facts.unparsed). Changed an always-review path: \(.facts.alwaysReview). Either one always requires review.",
+            ( if (.overrides // [] | length) > 0 then "", "Path overrides applied: \(.overrides | join(", "))." else empty end ),
             "",
             ( [ .contributors // {} | to_entries[] | select(.value | length > 0) ] as $c
               | if ($c | length) > 0 then
                   "**What drove the scores**",
                   "",
-                  ( $c[] | "- `\(.key)`: " + ( .value | map("`\(.symbol)` (\(.value // .level))") | join(", ") ) ),
+                  ( $c[] | "- `\(.key)`: " + ( .value[:10] | map(item) | join(", ") ) ),
                   ""
                 else empty end ),
             "\(.files | length) file(s) changed."
           ' "$report" >> "$summary"
 
-          # Without this, a change waved through by the exemption looks
-          # identical to one that was simply below the thresholds.
-          if [ "$TRUST_MODE" != "none" ]; then
-            {
-              echo
-              echo "Trust mode \`$TRUST_MODE\`: ${TRUST_REASON:-not resolved}."
-            } >> "$summary"
-          fi
-
+          # Parse errors, then the places behind every rule that fired. A place
+          # that no longer exists on the head side cannot carry an annotation.
           annotations=$(jq -c '
-            [ .parseErrors // [] | .[] | {
-                path: .path,
-                start_line: 1,
-                end_line: 1,
-                annotation_level: "failure",
-                title: "Unparseable file",
-                message: "lgtm could not parse this file on the \(.side) side: \(.reason). An unparseable tree always requires review."
-              } ] | .[0:50]
+            def source: {
+              "edit-depth": "editDepth", "cog-delta": "cogDelta",
+              "new-function-complexity": "newFunctionComplexity",
+              "significance": "significance", "called-exported-signature": "significance",
+              "blast-radius": "blastRadius", "lines-added": "linesAdded",
+              "uncovered-files": "uncoveredFiles", "always-review": "alwaysReview"
+            };
+            . as $r
+            | [ $r.files // [] | .[] | select(.kind == "delete") | .path ] as $gone
+            | [ $r.parseErrors // [] | .[] | {
+                  path: .path,
+                  start_line: 1,
+                  end_line: 1,
+                  annotation_level: "failure",
+                  title: "Unparseable file",
+                  message: "lgtm could not parse this file on the \(.side) side: \(.reason). An unparseable tree always requires review."
+                } ]
+              + [ ($r.reasons // [] | map(source[.] // empty) | unique)[] as $k
+                  | ($r.contributors[$k] // [])[]
+                  | select(.file and (.deleted | not) and (.file as $f | $gone | index($f) | not))
+                  | {
+                      path: .file,
+                      start_line: (.line // 1),
+                      end_line: (.line // 1),
+                      annotation_level: "warning",
+                      title: "lgtm: \($k)",
+                      message: ("This is behind the \($k) score"
+                        + (if .symbol then ": \(.symbol)" else "" end)
+                        + ((.value // .level) | if . == null then "" else " (\(.))" end) + ".")
+                    } ]
+            | .[0:50]
           ' "$report")
 
           # The Checks API caps output.text at 64KB and rejects the whole

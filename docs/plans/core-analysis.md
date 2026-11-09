@@ -5,6 +5,13 @@ Status: implemented on branch `claude/core-analysis-sophistication-7340ee`,
 `alloy/`. "As built" below records where the build differs from this design
 or adds to it.
 
+> Historical. Since this plan: the trusted-author exemption and fixed rule 4
+> were removed, edit depth left the default gate, and `epsilon-trivial` was
+> replaced by counting substantive changes
+> ([ADR 0003](../adr/0003-edit-depth-is-not-in-the-default-gate.md),
+> [ADR 0004](../adr/0004-the-gate-does-not-know-who-wrote-a-change.md)). The
+> report is now `schemaVersion` 3. Current defaults are in the README.
+
 Vocabulary is defined in [GLOSSARY.md](../../GLOSSARY.md). The two
 decisions that shape everything else are recorded as ADRs:
 

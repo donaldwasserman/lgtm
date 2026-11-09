@@ -99,28 +99,37 @@ assert UnparsedNeverGreenWithoutApproval {
   }
 }
 
--- Bridging to the gate: the trusted-contributor exemption survives the check
--- layer, so a trusted contributor's measured change is green with no reviews
--- at all.
-assert TrustedContributorStaysGreen {
-  all g: Evaluation | {
-    (publishable[g] and faithful[g] and g.outcome != Failed and
-     g.scores.trusted = TRUE and not unmeasured[g.scores])
-    implies isGreen[g]
-  }
-}
-
--- Bridging to the gate: code lgtm failed to analyze can never go green on its
--- own either (fixed rule 4).
-assert AnalysisFailureNeverGreenWithoutApproval {
+-- Bridging to the gate: a path the team marked always-review can never go
+-- green on its own either.
+assert AlwaysReviewNeverGreenWithoutApproval {
   all g: Evaluation | {
     (publishable[g] and faithful[g] and
-     g.scores.analysis_failed = TRUE and not hasApproval[g])
+     g.scores.always_review = TRUE and not hasApproval[g])
     implies not isGreen[g]
   }
 }
 
-check AnalysisFailureNeverGreenWithoutApproval for 4
+-- An approval left before the latest push does not clear the check.
+assert StaleApprovalDoesNotClear {
+  all g: Evaluation | {
+    (publishable[g] and g.outcome = Required and
+     (all rv: g.reviews | rv.onHead = FALSE))
+    implies not isGreen[g]
+  }
+}
+
+-- Nor does one from someone who cannot write to the repository.
+assert OutsiderApprovalDoesNotClear {
+  all g: Evaluation | {
+    (publishable[g] and g.outcome = Required and
+     (all rv: g.reviews | rv.by.canWrite = FALSE))
+    implies not isGreen[g]
+  }
+}
+
+check AlwaysReviewNeverGreenWithoutApproval for 4
+check StaleApprovalDoesNotClear for 4
+check OutsiderApprovalDoesNotClear for 4
 check AlwaysPublishesOnPullRequests for 4
 check AnalysisFailureFailsClosed for 4
 check ApprovalDoesNotExcuseFailure for 4
@@ -130,4 +139,3 @@ check ApprovalClearsTheCheck for 4
 check CommentsDoNotChangeTheVerdict for 4
 check LatestVerdictWins for 4
 check UnparsedNeverGreenWithoutApproval for 4
-check TrustedContributorStaysGreen for 4

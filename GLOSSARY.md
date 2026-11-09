@@ -20,6 +20,16 @@ A source file that could be read but not fully parsed on either side of the
 pull request, syntax errors included.
 _Avoid_: unreadable file, broken file
 
+**Uncovered file**:
+A changed file no measure can look at, because it is not in a supported
+language, and that the team has not chosen to ignore.
+_Avoid_: unsupported file, unknown file
+
+**Substantive change**:
+A change to a file that could alter behaviour: more than comments, formatting,
+imports, renamed locals or code moved between files of one module.
+_Avoid_: real change, meaningful change
+
 ## Measuring and gating
 
 **Measure**:
@@ -49,9 +59,22 @@ treats that measure's threshold as off for the file.
 _Avoid_: missing score, unsupported, n/a
 
 **Fixed rule**:
-A part of the gate that no configuration can switch off, such as "an unparsed
-file always requires review".
-_Avoid_: hard gate, override
+A part of the gate that no threshold can switch off, such as "an unparsed file
+always requires review".
+_Avoid_: hard gate
+
+**Always-review path**:
+A path the team has marked as needing review whenever a pull request changes it.
+_Avoid_: protected path, sensitive path
+
+**Preset**:
+A named gate a team can start from.
+_Avoid_: profile, policy
+
+**Override**:
+A set of stricter thresholds that applies to the whole pull request when it
+changes a given path. An override can tighten the gate but never loosen it.
+_Avoid_: exception, per-path gate
 
 ## Measures
 
@@ -59,6 +82,18 @@ _Avoid_: hard gate, override
 How deep in the syntax tree, plus how long the call chain below, the deepest
 change to existing code reaches.
 _Avoid_: depth, impact depth
+
+**Files touched**:
+The number of files, outside tests, with a substantive change.
+_Avoid_: breadth, width
+
+**Modules touched**:
+The number of packages those files belong to.
+_Avoid_: breadth, components
+
+**Lines added**:
+The number of non-blank lines a pull request adds to source files outside tests.
+_Avoid_: size, churn, LOC
 
 **Nesting depth**:
 How many syntactic levels a piece of code sits below the top of its file.

@@ -15,7 +15,7 @@ func TestRunExitCodes(t *testing.T) {
 	trivialBase := writeTree(t, "tb", map[string]string{"a.go": "package p\nfunc f(){}\n"})
 	trivialHead := writeTree(t, "th", map[string]string{"a.go": "package p\nfunc f(){}\n"})
 	broadHead := map[string]string{}
-	for i := 0; i < 8; i++ {
+	for i := 0; i < 16; i++ {
 		broadHead[filepath.Join("pkg", "f"+string(rune('a'+i))+".go")] = "package p\nfunc X(){}\n"
 	}
 	broadBase := writeTree(t, "bb", nil)
@@ -42,10 +42,15 @@ func TestRunExitCodes(t *testing.T) {
 		{"bad_level", []string{"--base", trivialBase, "--head", trivialHead, "--theta-significance", "severe"}, 2},
 		// Everything the change touches is under pkg/, so excluding it leaves nothing to flag.
 		{"exclude_dir", []string{"--base", broadBase, "--head", broad, "--exclude", "pkg"}, 0},
-		{"exclude_glob", []string{"--base", broadBase, "--head", broad, "--exclude", "pkg/f[a-h].go"}, 0},
+		{"exclude_glob", []string{"--base", broadBase, "--head", broad, "--exclude", "pkg/f[a-p].go"}, 0},
 		{"exclude_other", []string{"--base", broadBase, "--head", broad, "--exclude", "docs/**"}, 1},
 		{"exclude_bad_glob", []string{"--base", trivialBase, "--head", trivialHead, "--exclude", "[a"}, 2},
 		{"level_name", []string{"--base", trivialBase, "--head", trivialHead, "--theta-significance", "high"}, 0},
+		{"exclude_unknown_builtin", []string{"--base", trivialBase, "--head", trivialHead, "--exclude", "!nope"}, 2},
+		{"preset", []string{"--base", trivialBase, "--head", trivialHead, "--preset", "strict"}, 0},
+		{"bad_preset", []string{"--base", trivialBase, "--head", trivialHead, "--preset", "lax"}, 2},
+		{"missing_config", []string{"--base", trivialBase, "--head", trivialHead, "--config", filepath.Join(t.TempDir(), "absent.yml")}, 2},
+		{"trusted_is_gone", []string{"--base", trivialBase, "--head", trivialHead, "--trusted"}, 2},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -62,7 +67,7 @@ func TestRunExitCodes(t *testing.T) {
 func TestReportContract(t *testing.T) {
 	base := writeTree(t, "base", nil)
 	headFiles := map[string]string{}
-	for i := 0; i < 8; i++ {
+	for i := 0; i < 16; i++ {
 		headFiles[filepath.Join("pkg", "f"+string(rune('a'+i))+".go")] = "package p\nfunc X(){}\n"
 	}
 	head := writeTree(t, "head", headFiles)
@@ -94,19 +99,19 @@ func TestReportContract(t *testing.T) {
 		t.Errorf("reasons = %v, want [breadth-files]", rep["reasons"])
 	}
 	scores, _ := rep["scores"].(map[string]any)
-	for _, k := range []string{"editDepth", "newDepth", "depthTotal", "breadthFiles",
+	for _, k := range []string{"editDepth", "newDepth", "breadthFiles", "linesAdded", "uncoveredFiles",
 		"breadthModules", "cogDelta", "newFunctionComplexity", "significance", "calledSignificance", "blastRadius"} {
 		if _, ok := scores[k]; !ok {
 			t.Errorf("scores.%s missing; every measure is reported, null when unavailable", k)
 		}
 	}
 	gate, _ := rep["gate"].(map[string]any)
-	if gate["thetaDepth"] != float64(7) || gate["thetaModules"] != nil ||
+	if gate["thetaDepth"] != nil || gate["thetaModules"] != float64(4) ||
 		gate["thetaSignificance"] != "crucial" {
-		t.Errorf("gate = %v, want the defaults (modules off)", gate)
+		t.Errorf("gate = %v, want the defaults (depth off)", gate)
 	}
 	facts, _ := rep["facts"].(map[string]any)
-	if facts["unparsed"] != false || facts["trusted"] != false || facts["analysisFailed"] != false {
+	if facts["unparsed"] != false || facts["alwaysReview"] != false || len(facts) != 2 {
 		t.Errorf("facts = %v", facts)
 	}
 }

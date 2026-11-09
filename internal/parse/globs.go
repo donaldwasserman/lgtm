@@ -6,8 +6,8 @@ import (
 	"strings"
 )
 
-// Exclude is a set of glob patterns for paths the scan leaves out, on top of
-// the directories SkipDir always skips. A nil Exclude matches nothing.
+// Globs is a set of path patterns: what the scan leaves out, what counts as a
+// test, which changes always need review. A nil Globs matches nothing.
 //
 // Patterns match slash-separated paths relative to the tree root, and follow
 // gitignore's conventions where they are cheap to follow:
@@ -19,7 +19,7 @@ import (
 //   - "**" as a whole path segment matches any number of segments.
 //   - A pattern that matches a directory excludes everything under it.
 //   - A trailing "/" is ignored.
-type Exclude struct {
+type Globs struct {
 	patterns []pattern
 }
 
@@ -28,10 +28,10 @@ type pattern struct {
 	anywhere bool // no slash in the source: match at any depth
 }
 
-// NewExclude compiles patterns. Blank entries are ignored; a malformed glob
+// NewGlobs compiles patterns. Blank entries are ignored; a malformed glob
 // is an error rather than a pattern that silently matches nothing.
-func NewExclude(patterns []string) (*Exclude, error) {
-	e := &Exclude{}
+func NewGlobs(patterns []string) (*Globs, error) {
+	e := &Globs{}
 	for _, raw := range patterns {
 		p := strings.TrimSpace(raw)
 		p = strings.TrimSuffix(strings.TrimPrefix(p, "/"), "/")
@@ -41,7 +41,7 @@ func NewExclude(patterns []string) (*Exclude, error) {
 		segs := strings.Split(p, "/")
 		for _, s := range segs {
 			if _, err := path.Match(s, ""); err != nil {
-				return nil, fmt.Errorf("exclude pattern %q: %w", raw, err)
+				return nil, fmt.Errorf("path pattern %q: %w", raw, err)
 			}
 		}
 		e.patterns = append(e.patterns, pattern{
@@ -52,9 +52,9 @@ func NewExclude(patterns []string) (*Exclude, error) {
 	return e, nil
 }
 
-// Match reports whether rel (slash-separated, relative to the root) is
-// excluded, either itself or through a parent directory.
-func (e *Exclude) Match(rel string) bool {
+// Match reports whether rel (slash-separated, relative to the root) matches,
+// either itself or through a parent directory.
+func (e *Globs) Match(rel string) bool {
 	if e == nil || len(e.patterns) == 0 {
 		return false
 	}

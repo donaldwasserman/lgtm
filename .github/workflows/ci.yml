@@ -63,7 +63,7 @@ jobs:
           docker run --rm --network none --user "$(id -u):$(id -g)" \
             -v "$PWD:/repo:ro" -v "$RUNNER_TEMP:/out" \
             lgtm:ci --repo /repo --base-ref HEAD~1 --output /out/report.json --exit-zero
-          jq -e '.schemaVersion == 2 and (.verdict == "review-required" or .verdict == "no-review")' \
+          jq -e '.schemaVersion == 3 and (.verdict == "review-required" or .verdict == "no-review")' \
             "$RUNNER_TEMP/report.json"
       - name: A missing base ref fails closed
         run: |

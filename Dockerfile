@@ -1,8 +1,8 @@
 # syntax=docker/dockerfile:1
 
 # lgtm evaluates a code change and nothing else: no GitHub API, no network.
-# Anything platform-specific (trust, approvals, check runs) belongs to the
-# caller, which passes trust in as --trusted and reads the JSON report back.
+# Anything platform-specific (approvals, check runs) belongs to the caller,
+# which reads the JSON report back.
 
 # go-tree-sitter is cgo, so the builder needs a C toolchain and the runtime a
 # matching glibc. Both stages are bookworm for that reason.

@@ -49,7 +49,7 @@ func radius(t *testing.T, files map[string]string, changed ...string) int {
 	for _, c := range changed {
 		cs = append(cs, find(t, tab, c))
 	}
-	return Measure(g, cs).Radius
+	return Measure(g, cs, nil).Radius
 }
 
 func TestRadius(t *testing.T) {
@@ -123,7 +123,7 @@ func TestExemption(t *testing.T) {
 		"a.go":       "package p\nfunc dead() {}\nfunc routed() {}\nfunc Exported() {}\nfunc called() {}\nfunc user() { called() }\n",
 		"routes.txt": "GET /hook -> routed\n",
 	})
-	e := NewExemption(Build(tab), dir)
+	e := NewExemption(Build(tab), nil, dir)
 	for name, want := range map[string]bool{
 		"dead":     true,  // unexported, uncalled, unmentioned
 		"routed":   false, // named in a non-code file

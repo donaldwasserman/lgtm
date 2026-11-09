@@ -1,12 +1,25 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/donaldwasserman/lgtm/eval"
+	"github.com/donaldwasserman/lgtm/internal/blast"
+	"github.com/donaldwasserman/lgtm/internal/config"
+	"github.com/donaldwasserman/lgtm/internal/metrics"
+	"github.com/donaldwasserman/lgtm/internal/significance"
 )
+
+func withGate(g eval.Gate) *config.Resolved {
+	c := config.Default()
+	c.Gate = g
+	return c
+}
 
 // TestAnalyzeRequiresReview drives the full pipeline (scan -> diff -> metrics
 // -> decision) with distinct languages and asserts the Alloy-grounded outcome.
@@ -32,13 +45,13 @@ func TestAnalyzeRequiresReview(t *testing.T) {
 			base: map[string]string{},
 			head: func() map[string]string {
 				m := map[string]string{}
-				for i := 0; i < 8; i++ {
+				for i := 0; i < 16; i++ {
 					m[filepath.Join("pkg", "f"+string(rune('a'+i))+".go")] =
 						"package p\nfunc X( ){}\n"
 				}
 				return m
 			}(),
-			// 8 new files => breadth 8 >= thetaBreadth 6 and depth>epsilon
+			// 16 new files in one package => breadth 16 >= thetaBreadth 15
 			thr:    eval.DefaultGate,
 			expect: true,
 		},
@@ -57,7 +70,7 @@ func TestAnalyzeRequiresReview(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			base := writeTree(t, "base", c.base)
 			head := writeTree(t, "head", c.head)
-			_, requiresReview, err := analyze(base, head, c.thr, false, nil)
+			_, requiresReview, err := analyze(base, head, withGate(c.thr))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -66,34 +79,6 @@ func TestAnalyzeRequiresReview(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestTrustExemptsReview(t *testing.T) {
-	base := writeTree(t, "base", map[string]string{"f.go": "package p\nfunc helper(){}\n"})
-	// broad change that would normally require review
-	headFiles := map[string]string{}
-	for i := 0; i < 10; i++ {
-		headFiles[filepath.Join("pkg", "g"+string(rune('a'+i))+".go")] = "package p\nfunc Z(){}\n"
-	}
-	headFiles["f.go"] = "package p\nfunc helper(){ _ = Z() }\n"
-	head := writeTree(t, "head", headFiles)
-
-	rep, noExempt, err := analyze(base, head, eval.DefaultGate, false, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !noExempt {
-		t.Fatal("expected review required without exemption")
-	}
-	rep2, exempt, err := analyze(base, head, eval.DefaultGate, true, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = rep
-	if exempt {
-		t.Fatal("expected no review when the trusted exemption is set")
-	}
-	_ = rep2
 }
 
 func writeTree(t *testing.T, name string, files map[string]string) string {
@@ -116,7 +101,7 @@ func writeTree(t *testing.T, name string, files map[string]string) string {
 
 // wideRepo builds a tree of eight files in which only greet.go depends on
 // greeting; the other seven are identical across calls. It is deliberately
-// wider than the default thetaBreadth of 6.
+// wide enough to show that unchanged files do not count.
 func wideRepo(greeting string) map[string]string {
 	m := map[string]string{
 		"greet.go": "package p\n\nfunc Greet() string { return \"" + greeting + "\" }\n",
@@ -139,7 +124,7 @@ func TestUnparseableFileForcesReview(t *testing.T) {
 		"x.go": "package p\n\nfunc A() int { return \n((( \n",
 	})
 
-	rep, requiresReview, err := analyze(base, head, eval.DefaultGate, false, nil)
+	rep, requiresReview, err := analyze(base, head, config.Default())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,15 +138,6 @@ func TestUnparseableFileForcesReview(t *testing.T) {
 		rep.ParseErrors[0].Path != "x.go" || rep.ParseErrors[0].Side != "head" {
 		t.Fatalf("ParseErrors = %+v, want a single head-side entry for x.go", rep.ParseErrors)
 	}
-
-	// The top-20% exemption must not rescue a change that could not be measured.
-	_, exempt, err := analyze(base, head, eval.DefaultGate, true, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !exempt {
-		t.Fatal("top-20% exemption must not apply when a file failed to parse")
-	}
 }
 
 // TestCleanTreeReportsNoParseErrors pins the negative case, so the gate above
@@ -170,7 +146,7 @@ func TestCleanTreeReportsNoParseErrors(t *testing.T) {
 	base := writeTree(t, "base", map[string]string{"x.go": "package p\n\nfunc A() int { return 1 }\n"})
 	head := writeTree(t, "head", map[string]string{"x.go": "package p\n\nfunc A() int { return 2 }\n"})
 
-	rep, requiresReview, err := analyze(base, head, eval.DefaultGate, false, nil)
+	rep, requiresReview, err := analyze(base, head, config.Default())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -242,7 +218,7 @@ func F(xs []int) int {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			rep, got, err := analyze(writeTree(t, "base", c.base), writeTree(t, "head", c.head), eval.DefaultGate, false, nil)
+			rep, got, err := analyze(writeTree(t, "base", c.base), writeTree(t, "head", c.head), config.Default())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -259,5 +235,242 @@ func F(xs []int) int {
 				}
 			}
 		})
+	}
+}
+
+func hasReason(rep report, r eval.Reason) bool {
+	for _, x := range rep.Reasons {
+		if x == r {
+			return true
+		}
+	}
+	return false
+}
+
+func analyzeFiles(t *testing.T, base, head map[string]string, cfg *config.Resolved) report {
+	t.Helper()
+	rep, _, err := analyze(writeTree(t, "base", base), writeTree(t, "head", head), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rep
+}
+
+// TestUncoveredFiles: a changed file no measure can look at needs review
+// unless the configuration says it does not matter.
+func TestUncoveredFiles(t *testing.T) {
+	cases := []struct {
+		name       string
+		base, head map[string]string
+		want       int
+	}{
+		{"unsupported_language", map[string]string{"A.cs": "a"}, map[string]string{"A.cs": "b"}, 1},
+		{"sql_added", nil, map[string]string{"m.sql": "drop table t;"}, 1},
+		{"manifest_deleted", map[string]string{"go.mod": "module a"}, nil, 1},
+		{"docs_ignored", map[string]string{"README.md": "a"}, map[string]string{"README.md": "b"}, 0},
+		{"docs_dir_ignored", map[string]string{"docs/run.sh": "a"}, map[string]string{"docs/run.sh": "b"}, 0},
+		{"unchanged", map[string]string{"m.sql": "x"}, map[string]string{"m.sql": "x"}, 0},
+		{"same_size_differs", map[string]string{"m.sql": "aa"}, map[string]string{"m.sql": "ab"}, 1},
+		{"excluded_dir", map[string]string{"node_modules/x.yml": "a"}, map[string]string{"node_modules/x.yml": "b"}, 0},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			rep := analyzeFiles(t, c.base, c.head, config.Default())
+			if rep.Scores.UncoveredFiles != c.want {
+				t.Fatalf("uncoveredFiles = %d, want %d; files %+v", rep.Scores.UncoveredFiles, c.want, rep.Files)
+			}
+			if hasReason(rep, eval.ReasonUncovered) != (c.want > 0) {
+				t.Errorf("reasons = %v", rep.Reasons)
+			}
+		})
+	}
+}
+
+func TestAlwaysReviewPaths(t *testing.T) {
+	const on, off = "on: push\n", "on: pull_request\n"
+	rep := analyzeFiles(t, map[string]string{".github/workflows/x.yml": on}, map[string]string{".github/workflows/x.yml": off}, config.Default())
+	if !hasReason(rep, eval.ReasonAlwaysReview) || !rep.Facts.AlwaysReview {
+		t.Errorf("a workflow change must need review: %v", rep.Reasons)
+	}
+	rep = analyzeFiles(t, nil, map[string]string{config.FileName: "preset: strict\n"}, config.Default())
+	if !hasReason(rep, eval.ReasonAlwaysReview) {
+		t.Errorf("adding the configuration must need review: %v", rep.Reasons)
+	}
+}
+
+// TestConfigComesFromBase: a change cannot loosen the rules it is judged by.
+func TestConfigComesFromBase(t *testing.T) {
+	const a, b = "package a\n\nfunc F() {}\n", "package a\n\nfunc F() {}\n\nfunc G() {}\n"
+	base := writeTree(t, "base", map[string]string{"a.go": a, config.FileName: "always-review:\n  - a.go\n"})
+	head := writeTree(t, "head", map[string]string{"a.go": b, config.FileName: "always-review:\n  - '!/.lgtm.yml'\n"})
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"--base", base, "--head", head}, &stdout, &stderr); code != 1 {
+		t.Fatalf("exit = %d, want 1 from the base-side rule; stderr: %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), `"a.go"`) {
+		t.Errorf("report should name a.go: %s", stdout.String())
+	}
+}
+
+func TestExcludeDefaultsCanBeRemoved(t *testing.T) {
+	base := map[string]string{"internal/build/a.go": "package b\n\nfunc F() {}\n"}
+	head := map[string]string{"internal/build/a.go": "package b\n\nfunc F() {}\n\nfunc G() {}\n"}
+	if rep := analyzeFiles(t, base, head, config.Default()); len(rep.Files) != 0 {
+		t.Fatalf("build/ is excluded by default: %+v", rep.Files)
+	}
+	f := &config.File{Exclude: []string{"!build"}}
+	cfg, err := f.Resolve(config.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep := analyzeFiles(t, base, head, cfg); len(rep.Files) != 1 {
+		t.Fatalf("!build should bring the directory back: %+v", rep.Files)
+	}
+}
+
+// TestBreadthCountsSubstantiveNonTestFiles: only changes that could alter
+// behaviour, outside tests, make a change wide.
+func TestBreadthCountsSubstantiveNonTestFiles(t *testing.T) {
+	fn := func(body string) string { return "package a\n\nfunc F() {\n" + body + "\n}\n" }
+	cases := []struct {
+		name       string
+		base, head string
+		path       string
+		want       int
+	}{
+		{"statement", fn("\tg(1)"), fn("\tg(2)"), "a.go", 1},
+		{"comment", fn("\t// a\n\tg(1)"), fn("\t// b\n\tg(1)"), "a.go", 0},
+		{"local_rename", fn("\tx := 1\n\tg(x)"), fn("\ty := 1\n\tg(y)"), "a.go", 0},
+		{"import_only", "package a\n\nimport \"x\"\n", "package a\n\nimport \"y\"\n", "a.go", 0},
+		{"test_file", fn("\tg(1)"), fn("\tg(2)"), "a_test.go", 0},
+		{"test_dir", "def f():\n    return 1\n", "def f():\n    return 2\n", "tests/a.py", 0},
+		{"top_level_script", "print(1)\n", "print(2)\n", "a.py", 1},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			rep := analyzeFiles(t, map[string]string{c.path: c.base}, map[string]string{c.path: c.head}, config.Default())
+			if rep.Scores.BreadthFiles != c.want {
+				t.Fatalf("breadthFiles = %d, want %d", rep.Scores.BreadthFiles, c.want)
+			}
+		})
+	}
+}
+
+// TestModuleSweepRequiresReview: the default gate counts packages.
+func TestModuleSweepRequiresReview(t *testing.T) {
+	base, head := map[string]string{}, map[string]string{}
+	for i := 0; i < 4; i++ {
+		p := string(rune('a'+i)) + "/f.go"
+		base[p] = "package p\n\nfunc F() {\n\tg(1)\n}\n"
+		head[p] = "package p\n\nfunc F() {\n\tg(2)\n}\n"
+	}
+	rep := analyzeFiles(t, base, head, config.Default())
+	if !hasReason(rep, eval.ReasonBreadthModules) {
+		t.Errorf("reasons = %v, scores %+v", rep.Reasons, rep.Scores)
+	}
+}
+
+// TestDepthIsOffByDefault: the one-token edit edit depth used to flag.
+func TestDepthIsOffByDefault(t *testing.T) {
+	const tmpl = "package a\n\nfunc log(s string) {}\n\nfunc F() {\n\tlog(%s)\n}\n"
+	base := map[string]string{"a.go": strings.Replace(tmpl, "%s", `"old"`, 1)}
+	head := map[string]string{"a.go": strings.Replace(tmpl, "%s", `"new"`, 1)}
+	rep := analyzeFiles(t, base, head, config.Default())
+	if rep.RequiresReview || rep.Scores.EditDepth < 7 {
+		t.Fatalf("requiresReview %v at edit depth %d", rep.RequiresReview, rep.Scores.EditDepth)
+	}
+	f := &config.File{Thresholds: map[string]string{"depth": "7"}}
+	cfg, err := f.Resolve(config.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep = analyzeFiles(t, base, head, cfg); !hasReason(rep, eval.ReasonEditDepth) {
+		t.Errorf("depth can still be switched on: %v", rep.Reasons)
+	}
+	cs, ok := rep.Contributors["editDepth"].([]metrics.Contributor)
+	if !ok || len(cs) != 1 || cs[0].File != "a.go" || cs[0].Line != 6 {
+		t.Errorf("editDepth contributors = %+v, want a.go line 6", rep.Contributors["editDepth"])
+	}
+}
+
+func TestLinesAdded(t *testing.T) {
+	var big strings.Builder
+	big.WriteString("package a\n\n")
+	for i := 0; i < 400; i++ {
+		big.WriteString("func F" + strconv.Itoa(i) + "() {\n\tg()\n}\n\n")
+	}
+	rep := analyzeFiles(t, nil, map[string]string{"big.go": big.String()}, config.Default())
+	if !hasReason(rep, eval.ReasonLinesAdded) || rep.Scores.LinesAdded < 1000 {
+		t.Errorf("reasons %v, linesAdded %d", rep.Reasons, rep.Scores.LinesAdded)
+	}
+	rep = analyzeFiles(t, nil, map[string]string{"big_test.go": big.String()}, config.Default())
+	if rep.Scores.LinesAdded != 0 {
+		t.Errorf("test lines counted: %d", rep.Scores.LinesAdded)
+	}
+}
+
+// TestConstantsAreSymbols: a constant's value is visible in every language.
+func TestMovedCodeAddsNoLines(t *testing.T) {
+	const src = "package a\n\nfunc F() {\n\tg(1)\n}\n"
+	rep := analyzeFiles(t, map[string]string{"a.go": src}, map[string]string{"z.go": src}, config.Default())
+	if rep.Scores.LinesAdded != 0 || rep.Scores.BreadthFiles != 0 || rep.RequiresReview {
+		t.Errorf("renaming a file: lines %d, files %d, reasons %v", rep.Scores.LinesAdded, rep.Scores.BreadthFiles, rep.Reasons)
+	}
+}
+
+func TestConstantsAreSymbols(t *testing.T) {
+	cases := []struct{ path, tmpl string }{
+		{"a.go", "package a\n\nconst Limit = %s\n\nfunc G() int { return Limit }\n"},
+		{"b.go", "package a\n\nvar (\n\tLimit = %s\n)\n\nfunc G() int { return Limit }\n"},
+		{"a.py", "LIMIT = %s\n\ndef g():\n    return LIMIT\n"},
+		{"a.js", "export const LIMIT = %s;\nexport function g() { return LIMIT; }\n"},
+		{"a.ts", "export const LIMIT: number = %s;\nexport function g() { return LIMIT; }\n"},
+		{"A.java", "public class A {\n  public static final int LIMIT = %s;\n  int g() { return LIMIT; }\n}\n"},
+		{"a.rs", "pub const LIMIT: i32 = %s;\npub fn g() -> i32 { LIMIT }\n"},
+		{"a.rb", "LIMIT = %s\ndef g\n  LIMIT\nend\n"},
+	}
+	for _, c := range cases {
+		t.Run(c.path, func(t *testing.T) {
+			rep := analyzeFiles(t,
+				map[string]string{c.path: strings.Replace(c.tmpl, "%s", "1", 1)},
+				map[string]string{c.path: strings.Replace(c.tmpl, "%s", "2", 1)}, config.Default())
+			if *rep.Scores.Significance != eval.Low {
+				t.Errorf("significance = %v, want low", *rep.Scores.Significance)
+			}
+			if *rep.Scores.BlastRadius != 1 {
+				t.Errorf("blastRadius = %d, want its one reader", *rep.Scores.BlastRadius)
+			}
+		})
+	}
+}
+
+func TestContributorsCarryHeadLines(t *testing.T) {
+	const base = "package a\n\nfunc Parse(s string) int { return 1 }\n\nfunc Run() { Parse(\"x\") }\n"
+	const head = "package a\n\n// pushed down\n\nfunc Parse(s, t string) int { return 1 }\n\nfunc Run() { Parse(\"x\") }\n"
+	rep := analyzeFiles(t, map[string]string{"a.go": base}, map[string]string{"a.go": head}, config.Default())
+	sig, ok := rep.Contributors["significance"].([]significance.Contributor)
+	if !ok || len(sig) == 0 || sig[0].Line != 5 {
+		t.Errorf("significance = %+v, want line 5", rep.Contributors["significance"])
+	}
+	br, ok := rep.Contributors["blastRadius"].([]blast.Contributor)
+	if !ok || len(br) == 0 || br[0].Line != 5 || br[0].Deleted {
+		t.Errorf("blastRadius = %+v, want line 5", rep.Contributors["blastRadius"])
+	}
+}
+
+func TestOverrideTightensTheGate(t *testing.T) {
+	base := map[string]string{"pay/a.go": "package a\n\nfunc F(x int) int {\n\tif x > 0 {\n\t\treturn 1\n\t}\n\treturn 0\n}\n"}
+	head := map[string]string{"pay/a.go": "package a\n\nfunc F(x int) int {\n\tif x >= 0 {\n\t\treturn 1\n\t}\n\treturn 0\n}\n"}
+	f := &config.File{Overrides: []config.Override{{Name: "pay", Paths: []string{"pay/**"}, Preset: "strict"}}}
+	cfg, err := f.Resolve(config.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rep := analyzeFiles(t, base, head, cfg)
+	if !hasReason(rep, eval.ReasonSignificance) || len(rep.Overrides) != 1 {
+		t.Errorf("reasons %v, overrides %v", rep.Reasons, rep.Overrides)
+	}
+	if rep = analyzeFiles(t, base, head, config.Default()); rep.RequiresReview {
+		t.Errorf("without the override this passes: %v", rep.Reasons)
 	}
 }
