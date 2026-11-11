@@ -286,6 +286,44 @@ func TestUncoveredFiles(t *testing.T) {
 	}
 }
 
+// TestStylesheets: a stylesheet is never uncovered, but the lines it adds and
+// the file it touches still count. Whitespace and reordering change nothing.
+func TestStylesheets(t *testing.T) {
+	const a = ".a { color: red; }\n.b { margin: 0; }\n"
+	cases := []struct {
+		name        string
+		base, head  map[string]string
+		files, line int
+	}{
+		{"edited", map[string]string{"app.css": a}, map[string]string{"app.css": ".a { color: blue; }\n.b { margin: 0; }\n"}, 1, 1},
+		{"added_scss", nil, map[string]string{"s/x.scss": "a {\n  b: c;\n}\n"}, 1, 3},
+		{"reordered", map[string]string{"app.css": a}, map[string]string{"app.css": ".b { margin: 0; }\n.a { color: red; }\n"}, 0, 0},
+		{"whitespace", map[string]string{"app.css": a}, map[string]string{"app.css": "\n" + a + "\n"}, 0, 0},
+		{"deleted", map[string]string{"app.css": a}, nil, 1, 0},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			rep := analyzeFiles(t, c.base, c.head, config.Default())
+			if rep.Scores.UncoveredFiles != 0 {
+				t.Errorf("uncoveredFiles = %d, want 0", rep.Scores.UncoveredFiles)
+			}
+			if rep.Scores.BreadthFiles != c.files || rep.Scores.LinesAdded != c.line {
+				t.Errorf("files=%d lines=%d, want %d and %d", rep.Scores.BreadthFiles, rep.Scores.LinesAdded, c.files, c.line)
+			}
+		})
+	}
+	t.Run("opt_out", func(t *testing.T) {
+		cfg, err := (&config.File{StylePaths: []string{"!*.css"}, UncoveredIgnore: []string{"!*.css"}}).Resolve(config.Options{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		rep := analyzeFiles(t, map[string]string{"app.css": "a"}, map[string]string{"app.css": "b"}, cfg)
+		if rep.Scores.UncoveredFiles != 1 {
+			t.Errorf("uncoveredFiles = %d, want 1", rep.Scores.UncoveredFiles)
+		}
+	})
+}
+
 func TestAlwaysReviewPaths(t *testing.T) {
 	const on, off = "on: push\n", "on: pull_request\n"
 	rep := analyzeFiles(t, map[string]string{".github/workflows/x.yml": on}, map[string]string{".github/workflows/x.yml": off}, config.Default())

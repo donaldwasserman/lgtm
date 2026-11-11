@@ -87,6 +87,7 @@ const (
 	coverageAnalyzed  = "analyzed"
 	coverageUncovered = "uncovered"
 	coverageIgnored   = "ignored"
+	coverageStyle     = "style"
 )
 
 // version is set at build time with -ldflags "-X main.version=...".
@@ -272,7 +273,18 @@ func analyze(base, head string, cfg *config.Resolved) (report, bool, error) {
 	scores.LinesAdded = lines
 	contributors["linesAdded"] = lineContributors
 
-	files, uncovered := coverage(others, cfg)
+	files, uncovered, styles := coverage(others, cfg, base, head)
+	for _, st := range styles {
+		breadth = append(breadth, st.path)
+		scores.LinesAdded += st.added
+		if st.added > 0 {
+			lineContributors = append(lineContributors, metrics.Contributor{File: st.path, Value: st.added})
+		}
+	}
+	sort.Strings(breadth)
+	scores.BreadthFiles = len(breadth)
+	contributors["breadthFiles"] = fileRefs(breadth)
+	contributors["linesAdded"] = metrics.Top(lineContributors)
 	scores.UncoveredFiles = len(uncovered)
 	contributors["uncoveredFiles"] = fileRefs(uncovered)
 	for _, fc := range res.Files {

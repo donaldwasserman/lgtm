@@ -20,6 +20,9 @@ test-paths:               # not counted in files, modules or lines
 uncovered-ignore:         # may change without counting as uncovered
   - 'VERSION'
 
+style-paths:              # stylesheets: never uncovered, but their size counts
+  - '*.styl'
+
 always-review:            # any change here needs review
   - 'src/auth'
 
@@ -61,7 +64,7 @@ Settings apply in this order, later ones winning:
 
 ## Path lists
 
-`exclude`, `test-paths`, `uncovered-ignore` and `always-review` each start from
+`exclude`, `test-paths`, `uncovered-ignore`, `style-paths` and `always-review` each start from
 a built-in list. A pattern adds to the list; `!entry` removes that exact entry.
 Removing an entry that isn't there is an error, so a typo can't go unnoticed.
 
@@ -74,7 +77,8 @@ directories, and a pattern matching a directory covers everything under it.
 | --- | --- |
 | `exclude` | `.git` `node_modules` `vendor` `.venv` `venv` `__pycache__` `dist` `build` `target` `.tox` `.idea` `.vscode` |
 | `test-paths` | `*_test.go` `test_*.py` `*_test.py` `conftest.py` `*_test.rb` `*_spec.rb` `*.test.*` `*.spec.*` `*Test.java` `*Tests.java` `__tests__` `test` `tests` `spec` `testdata` |
-| `uncovered-ignore` | `*.md` `*.mdx` `*.rst` `*.txt` `docs` `LICENSE*` `NOTICE*` `AUTHORS*` `.gitignore` `.gitattributes` `.editorconfig` `*.png` `*.jpg` `*.jpeg` `*.gif` `*.svg` `*.ico` `*.webp` |
+| `uncovered-ignore` | `*.md` `*.mdx` `*.rst` `*.txt` `docs` `LICENSE*` `NOTICE*` `AUTHORS*` `.gitignore` `.gitattributes` `.editorconfig` `*.png` `*.jpg` `*.jpeg` `*.gif` `*.svg` `*.ico` `*.webp` `*.css` `*.scss` `*.sass` `*.less` |
+| `style-paths` | `*.css` `*.scss` `*.sass` `*.less` |
 | `always-review` | `.github/workflows` `/.lgtm.yml` |
 
 Excluded paths are invisible: they aren't parsed, counted, or matched by
@@ -169,6 +173,39 @@ always-review:
   - 'terraform'
   - '*.sql'
   - 'Dockerfile'
+```
+
+### Stylesheets
+
+`lgtm` can't read CSS, Sass or Less as code, but a stylesheet change rarely
+carries logic risk. By default `*.css`, `*.scss`, `*.sass` and `*.less` are
+**style paths**: they are never uncovered, and they count toward files and lines
+added (non-blank lines the change adds; reordering and whitespace count for
+nothing). They add nothing to modules, complexity, significance or blast radius.
+
+Treat another format the same way:
+
+```yaml
+style-paths:
+  - '*.styl'
+```
+
+To ignore stylesheets entirely, so they count for nothing, leave them out of
+style paths (they stay on the `uncovered-ignore` list):
+
+```yaml
+style-paths:
+  - '!*.css'
+  - '!*.scss'
+  - '!*.sass'
+  - '!*.less'
+```
+
+To make them need review again, remove them from both lists:
+
+```yaml
+style-paths: ['!*.css']
+uncovered-ignore: ['!*.css']
 ```
 
 ### Monorepo with separate teams

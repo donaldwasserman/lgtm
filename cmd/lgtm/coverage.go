@@ -1,11 +1,14 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"sort"
 
 	"github.com/donaldwasserman/lgtm/eval"
 	"github.com/donaldwasserman/lgtm/internal/config"
 	"github.com/donaldwasserman/lgtm/internal/diff"
+	"github.com/donaldwasserman/lgtm/internal/metrics"
 	"github.com/donaldwasserman/lgtm/internal/model"
 	"github.com/donaldwasserman/lgtm/internal/parse"
 	"github.com/donaldwasserman/lgtm/internal/significance"
@@ -67,19 +70,44 @@ func substantiveFiles(res *diff.Result, rated []significance.Rated, pairs []symb
 	return out
 }
 
-// coverage sorts the changed files lgtm did not parse into those the
-// configuration ignores and those it must count.
-func coverage(others []parse.Unscanned, cfg *config.Resolved) (files []*fileSummary, uncovered []string) {
+// styleChange is a changed stylesheet: a file lgtm can't read as code but
+// whose size still counts.
+type styleChange struct {
+	path           string
+	added, removed int
+}
+
+// coverage sorts the changed files lgtm did not parse into stylesheets, those
+// the configuration ignores, and those it must count. A stylesheet is never
+// uncovered; the lines it adds and the files it touches are counted instead.
+func coverage(others []parse.Unscanned, cfg *config.Resolved, base, head string) (files []*fileSummary, uncovered []string, styles []styleChange) {
 	for _, o := range others {
 		state := coverageUncovered
-		if cfg.UncoveredIgnore.Match(o.Path) {
+		switch {
+		case cfg.Styles.Match(o.Path) && !cfg.Tests.Match(o.Path):
+			state = coverageStyle
+			added, removed := metrics.TextChange(readText(base, o.Path), readText(head, o.Path))
+			if added+removed > 0 {
+				styles = append(styles, styleChange{o.Path, added, removed})
+			}
+		case cfg.UncoveredIgnore.Match(o.Path):
 			state = coverageIgnored
-		} else {
+		default:
 			uncovered = append(uncovered, o.Path)
 		}
 		files = append(files, &fileSummary{Path: o.Path, Kind: string(o.Kind), Coverage: state})
 	}
-	return files, uncovered
+	return files, uncovered, styles
+}
+
+// readText returns a file's text, or "" when it is missing or unreadable (a
+// file added or deleted by the change).
+func readText(root, rel string) string {
+	b, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
+	if err != nil {
+		return ""
+	}
+	return string(b)
 }
 
 func fileRefs(paths []string) []fileRef {

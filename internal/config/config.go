@@ -36,7 +36,11 @@ var (
 	// DefaultUncoveredIgnore can change without counting as uncovered.
 	DefaultUncoveredIgnore = []string{"*.md", "*.mdx", "*.rst", "*.txt", "docs", "LICENSE*", "NOTICE*",
 		"AUTHORS*", ".gitignore", ".gitattributes", ".editorconfig",
-		"*.png", "*.jpg", "*.jpeg", "*.gif", "*.svg", "*.ico", "*.webp"}
+		"*.png", "*.jpg", "*.jpeg", "*.gif", "*.svg", "*.ico", "*.webp",
+		"*.css", "*.scss", "*.sass", "*.less"}
+	// DefaultStylePaths are stylesheets lgtm can't read as code. They are never
+	// uncovered, but the lines they add and the files they touch still count.
+	DefaultStylePaths = []string{"*.css", "*.scss", "*.sass", "*.less"}
 	// DefaultAlwaysReview always needs review when changed: the workflows
 	// that run the gate and the file that configures it.
 	DefaultAlwaysReview = []string{".github/workflows", "/" + FileName}
@@ -49,6 +53,7 @@ type File struct {
 	Exclude         []string          `yaml:"exclude"`
 	TestPaths       []string          `yaml:"test-paths"`
 	UncoveredIgnore []string          `yaml:"uncovered-ignore"`
+	StylePaths      []string          `yaml:"style-paths"`
 	AlwaysReview    []string          `yaml:"always-review"`
 	Overrides       []Override        `yaml:"overrides"`
 }
@@ -96,6 +101,7 @@ type Resolved struct {
 	TextSkip        *parse.Globs // built-in excludes still in force, for text searches
 	Tests           *parse.Globs
 	UncoveredIgnore *parse.Globs
+	Styles          *parse.Globs
 	AlwaysReview    *parse.Globs
 	overrides       []resolvedOverride
 	pinned          map[string]string
@@ -158,6 +164,7 @@ func (f *File) Resolve(opts Options) (*Resolved, error) {
 		{"exclude", nil, kept, &r.TextSkip},
 		{"test-paths", DefaultTestPaths, f.TestPaths, &r.Tests},
 		{"uncovered-ignore", DefaultUncoveredIgnore, f.UncoveredIgnore, &r.UncoveredIgnore},
+		{"style-paths", DefaultStylePaths, f.StylePaths, &r.Styles},
 		{"always-review", DefaultAlwaysReview, f.AlwaysReview, &r.AlwaysReview},
 	}
 	for _, l := range lists {

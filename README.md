@@ -212,7 +212,7 @@ $ lgtm --base before/ --head after/
 | `overrides` | The path overrides that applied |
 | `contributors` | What's behind each score, highest first: the symbol, file, and line where they apply. `deleted` marks a place that no longer exists |
 | `parseErrors` | Files that couldn't be parsed. Only present if there are any; forces review |
-| `files` | Files that changed, how (`insert`, `delete`, `modify`), and `coverage` (`analyzed`, `uncovered`, `ignored`) |
+| `files` | Files that changed, how (`insert`, `delete`, `modify`), and `coverage` (`analyzed`, `uncovered`, `ignored`, `style`) |
 
 ### Other CI systems
 
@@ -243,7 +243,9 @@ jq -r .verdict out/lgtm.json
 | Rust | `.rs` |
 
 Any other changed file counts as uncovered unless it's on the ignore list, which
-by default covers documentation, images and licenses.
+by default covers documentation, images and licenses. Stylesheets (`.css`,
+`.scss`, `.sass`, `.less`) are never uncovered; their added lines and touched
+files still count (see [configuration](docs/configuration.md#stylesheets)).
 
 ## More
 

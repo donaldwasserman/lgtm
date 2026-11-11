@@ -3,6 +3,12 @@
 Each version's section becomes its GitHub release notes. Versioning rules are
 in [docs/releasing.md](docs/releasing.md#version-numbers).
 
+## Unreleased
+
+- Stylesheets (`.css`, `.scss`, `.sass`, `.less`) no longer count as uncovered files.
+  A new `style-paths` list counts their added lines and touched files instead.
+  The report's file `coverage` gains `style`.
+
 ## 0.0.5
 
 Changes how the gate decides, and the report format (`schemaVersion` 3).

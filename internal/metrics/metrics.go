@@ -118,6 +118,9 @@ func added(have map[string]int, head string) int {
 	return n
 }
 
+// Top sorts contributors largest first and keeps the TopN.
+func Top(cs []Contributor) []Contributor { return top(cs) }
+
 func top(cs []Contributor) []Contributor {
 	sort.SliceStable(cs, func(i, j int) bool {
 		if cs[i].Value != cs[j].Value {
@@ -129,4 +132,18 @@ func top(cs []Contributor) []Contributor {
 		cs = cs[:TopN]
 	}
 	return cs
+}
+
+// TextChange compares the non-blank lines of two versions of a file that
+// lgtm cannot parse. It returns how many lines the head adds and how many it
+// drops, so a reorder or a whitespace edit is neither.
+func TextChange(base, head string) (added0, removed int) {
+	have := map[string]int{}
+	remember(have, base)
+	delete(have, "") // blank lines don't count
+	added0 = added(have, head)
+	for _, n := range have {
+		removed += n
+	}
+	return added0, removed
 }
