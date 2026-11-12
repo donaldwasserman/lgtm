@@ -14,12 +14,10 @@ import (
 func TestRunExitCodes(t *testing.T) {
 	trivialBase := writeTree(t, "tb", map[string]string{"a.go": "package p\nfunc f(){}\n"})
 	trivialHead := writeTree(t, "th", map[string]string{"a.go": "package p\nfunc f(){}\n"})
-	broadHead := map[string]string{}
-	for i := 0; i < 16; i++ {
-		broadHead[filepath.Join("pkg", "f"+string(rune('a'+i))+".go")] = "package p\nfunc X(){}\n"
-	}
-	broadBase := writeTree(t, "bb", nil)
-	broad := writeTree(t, "bh", broadHead)
+	// An edit to existing code in 16 files: wide. (New files would not
+	// count: new code is judged by lines added.)
+	broadBase := writeTree(t, "bb", broadFiles("func X(){}\n"))
+	broad := writeTree(t, "bh", broadFiles("func X(){ y() }\n"))
 
 	cases := []struct {
 		name string
@@ -65,12 +63,8 @@ func TestRunExitCodes(t *testing.T) {
 // TestReportContract checks the fields the GitHub Action and other CI read,
 // and that --output writes the same report as stdout.
 func TestReportContract(t *testing.T) {
-	base := writeTree(t, "base", nil)
-	headFiles := map[string]string{}
-	for i := 0; i < 16; i++ {
-		headFiles[filepath.Join("pkg", "f"+string(rune('a'+i))+".go")] = "package p\nfunc X(){}\n"
-	}
-	head := writeTree(t, "head", headFiles)
+	base := writeTree(t, "base", broadFiles("func X(){}\n"))
+	head := writeTree(t, "head", broadFiles("func X(){ y() }\n"))
 	outFile := filepath.Join(t.TempDir(), "report.json")
 
 	var stdout, stderr bytes.Buffer
@@ -202,4 +196,13 @@ func TestVersion(t *testing.T) {
 	if got := stdout.String(); got != "1.2.3\n" {
 		t.Fatalf("stdout %q, want %q", got, "1.2.3\n")
 	}
+}
+
+// broadFiles is 16 files in one package, each holding body.
+func broadFiles(body string) map[string]string {
+	m := map[string]string{}
+	for i := 0; i < 16; i++ {
+		m[filepath.Join("pkg", "f"+string(rune('a'+i))+".go")] = "package p\n" + body
+	}
+	return m
 }

@@ -38,15 +38,16 @@ func (f *stringsFlag) Set(s string) error {
 
 // thresholdHelp describes each threshold, keyed by its eval.Gate name.
 var thresholdHelp = map[string]string{
-	"depth":        "edit depth",
-	"breadth":      "non-test files with a substantive change",
-	"modules":      "packages those files belong to",
-	"lines":        "non-blank lines added to non-test source files",
-	"uncovered":    "changed files no measure can look at",
-	"cog":          "increase in one existing function's cognitive complexity",
-	"new-function": "cognitive complexity of one new function",
-	"significance": "significance level (low, medium, high, crucial)",
-	"blast":        "blast radius (callers within 3 hops)",
+	"depth":          "edit depth",
+	"breadth":        "non-test files whose existing code changed",
+	"modules":        "packages those files belong to",
+	"lines":          "non-blank lines added to non-test source files",
+	"uncovered":      "changed files no measure can look at",
+	"cog":            "increase in one existing function's cognitive complexity",
+	"new-function":   "cognitive complexity of one new function",
+	"significance":   "significance level (low, medium, high, crucial)",
+	"blast":          "blast radius (callers within 3 hops of logic changes)",
+	"test-deletions": "non-blank lines removed from test files",
 }
 
 // gateFlags registers one --theta-* flag per threshold.

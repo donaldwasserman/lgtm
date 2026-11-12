@@ -6,10 +6,12 @@
 
 `lgtm` looks at a pull request and decides whether it needs a human review.
 
-Small, contained changes pass on their own. Changes that make existing code
-harder to follow, break what depends on it, spread across the codebase, or touch
-something `lgtm` can't read are flagged and stay blocked until someone approves
-them.
+Small, contained changes pass on their own, and so does new code that is
+readable and not too large: a new form, endpoint and the logic behind them can
+pass however many files it adds. Changes that make existing code harder to
+follow, change logic that much of the codebase depends on, spread edits across
+existing code, delete tests, or touch something `lgtm` can't read are flagged
+and stay blocked until someone approves them.
 
 It runs as a GitHub Action (the usual way), a Docker image, or a command-line
 tool.
@@ -22,14 +24,15 @@ review" or not. You set the thresholds; every one can be switched `off`.
 
 | Measure | Plain meaning | Default threshold |
 | --- | --- | --- |
-| **Files touched** | How many files outside tests have a change that could alter behaviour | 15 |
+| **Files touched** | How many existing files outside tests had their code changed in a way that could alter behaviour. New files don't count | 15 |
 | **Modules touched** | How many packages those files belong to | 4 |
 | **Lines added** | How many non-blank lines were added to source files outside tests | 1000 |
 | **Uncovered files** | How many changed files `lgtm` can't read (another language, SQL, YAML) and you haven't told it to ignore | 1 |
+| **Test lines removed** | How many non-blank lines disappeared from test files and fixtures. A test moved to another file doesn't count | 100 |
 | **Complexity increase** | The most any existing function got harder to read ([cognitive complexity](https://www.sonarsource.com/docs/CognitiveComplexity.pdf)) | 5 |
 | **New-function complexity** | How hard to read the most complex new function is | 25 |
 | **Significance** | The riskiest kind of change to existing code: none, low (statements, constant values), medium (conditions, error handling), high (an exported signature), crucial (an export removed, a superclass changed) | crucial |
-| **Blast radius** | How many symbols call what changed, up to three calls away | 30 |
+| **Blast radius** | How many symbols call code whose logic changed (a condition, error handling, a signature or more), up to three calls away. A statement or constant edit doesn't count | 30 |
 | **Edit depth** | How deep in the syntax tree the deepest change sits. It depends on each language's grammar, so it's reported but not used by default | off |
 
 While the significance threshold is on, an exported signature change to
@@ -43,8 +46,10 @@ Two rules ignore the thresholds:
 
 Comments, formatting, imports, renamed locals and code moved within a module
 don't count as touching a file. Neither does deleting a private function
-nothing uses. New code is judged by new-function complexity and by the file,
-module and line counts: a narrow addition of readable code passes.
+nothing uses, nor adding a new file or function. New code is judged by
+new-function complexity and lines added: an addition of readable code passes
+however many files and packages it spans, while the small edits that wire it in
+count as touching those files.
 
 Defaults and path lists can be changed in a `.lgtm.yml`, including what `lgtm`
 skips. See **[docs/configuration.md](docs/configuration.md)** for the options
@@ -145,7 +150,7 @@ Git mode needs `git` installed; the Docker image includes it.
 | `--head` | | Folder with the code after the change |
 | `--config` | `.lgtm.yml` in the base tree | Configuration file |
 | `--preset` | `balanced` | Gate to start from: `balanced` or `strict` |
-| `--theta-breadth` | `15` | Files touched that require review |
+| `--theta-breadth` | `15` | Files touched (existing code changed) that require review |
 | `--theta-modules` | `4` | Modules touched that require review |
 | `--theta-lines` | `1000` | Lines added that require review |
 | `--theta-uncovered` | `1` | Uncovered files that require review |
@@ -153,6 +158,7 @@ Git mode needs `git` installed; the Docker image includes it.
 | `--theta-new-function` | `25` | Cognitive complexity of one new function that requires review |
 | `--theta-significance` | `crucial` | Significance level (`low`, `medium`, `high`, `crucial`) that requires review |
 | `--theta-blast` | `30` | Blast radius that requires review |
+| `--theta-test-deletions` | `100` | Test lines removed that require review |
 | `--theta-depth` | `off` | Edit depth that requires review |
 | `--exclude` | | Glob of paths to leave out of the scan; repeat for several. `!entry` removes a built-in entry |
 | `--output` | | Also write the report to this file |
@@ -180,17 +186,17 @@ Here `lib.Parse` gained a parameter, and `app.Run` calls it (abridged):
 ```console
 $ lgtm --base before/ --head after/
 {
-  "schemaVersion": 3,
+  "schemaVersion": 4,
   "verdict": "review-required",
   "requiresReview": true,
   "reasons": ["called-exported-signature"],
   "scores": { "editDepth": 3, "newDepth": 4, "breadthFiles": 1, "breadthModules": 1,
-              "linesAdded": 1, "uncoveredFiles": 0, "cogDelta": 0, "newFunctionComplexity": 0,
+              "linesAdded": 1, "uncoveredFiles": 0, "testLinesRemoved": 0, "cogDelta": 0, "newFunctionComplexity": 0,
               "significance": "high", "calledSignificance": "high", "blastRadius": 1 },
   "facts": { "unparsed": false, "alwaysReview": false },
   "gate": { "thetaDepth": null, "thetaBreadth": 15, "thetaModules": 4, "thetaLines": 1000,
             "thetaUncovered": 1, "thetaCog": 5, "thetaNewFunction": 25,
-            "thetaSignificance": "crucial", "thetaBlast": 30 },
+            "thetaSignificance": "crucial", "thetaBlast": 30, "thetaTestDeletions": 100 },
   "overrides": [],
   "contributors": {
     "significance": [ { "symbol": "lib Parse", "file": "lib/lib.go", "line": 3, "level": "high", "parts": ["signature"] } ],
@@ -202,10 +208,10 @@ $ lgtm --base before/ --head after/
 
 | Field | Meaning |
 | --- | --- |
-| `schemaVersion` | `3`. Goes up only if a field is renamed, removed, or changes meaning |
+| `schemaVersion` | `4`. Goes up only if a field is renamed, removed, or changes meaning |
 | `verdict` | `"review-required"` or `"no-review"` |
 | `requiresReview` | Same, as `true`/`false` |
-| `reasons` | Every rule that required review (`unparsed`, `always-review`, `edit-depth`, `breadth-files`, `breadth-modules`, `lines-added`, `uncovered-files`, `cog-delta`, `new-function-complexity`, `significance`, `called-exported-signature`, `blast-radius`) |
+| `reasons` | Every rule that required review (`unparsed`, `always-review`, `edit-depth`, `breadth-files`, `breadth-modules`, `lines-added`, `uncovered-files`, `cog-delta`, `new-function-complexity`, `significance`, `called-exported-signature`, `blast-radius`, `test-deletions`) |
 | `scores` | One score per measure. `null` means the measure isn't available for the change's languages, which never requires review |
 | `facts` | Inputs to the rules that ignore thresholds |
 | `gate` | The thresholds used, after any overrides. `null` means switched off |

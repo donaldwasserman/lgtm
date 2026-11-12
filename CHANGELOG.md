@@ -3,6 +3,24 @@
 Each version's section becomes its GitHub release notes. Versioning rules are
 in [docs/releasing.md](docs/releasing.md#version-numbers).
 
+## Unreleased
+
+Changes how the gate decides, and the report format (`schemaVersion` 4). See
+[docs/adr/0005-new-code-is-not-wide-and-blast-counts-logic.md](docs/adr/0005-new-code-is-not-wide-and-blast-counts-logic.md).
+
+- Files and modules touched count only files whose existing code changed. New
+  files and new symbols no longer count, so a feature built from new code is
+  judged by lines added and new-function complexity.
+- Blast radius counts only callers of changes of at least medium significance
+  (a condition, error handling, a signature or more). A statement or constant
+  edit in a widely called function no longer has a blast radius.
+  `calledSignificance` is unchanged.
+- New score, test lines removed (`scores.testLinesRemoved`), and threshold
+  `test-deletions` (`--theta-test-deletions`, action input
+  `theta-test-deletions`): 100 in `balanced`, 50 in `strict`. Lines removed from
+  test files and fixtures count unless they appear again in a test file, so
+  moving tests is free and deleting them en masse requires review.
+
 ## 0.0.5
 
 Changes how the gate decides, and the report format (`schemaVersion` 3).

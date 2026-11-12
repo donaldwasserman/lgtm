@@ -47,6 +47,7 @@ annotation() { # <label> <jq expression over the array> <want>
 
 contains '| Lines added | 40 | 1000 |  |'
 contains '| Uncovered files | 2 | 1 | **yes** |'
+contains '| Test lines removed | 12 | 100 |  |'
 contains '| Edit depth | 9 | off |  |'
 contains 'Path overrides applied: payments.'
 contains '`lib F` `a.go:12` (6)'

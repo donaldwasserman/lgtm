@@ -123,3 +123,21 @@ func TestAddedLines(t *testing.T) {
 		}
 	}
 }
+
+func TestTestLinesRemoved(t *testing.T) {
+	base := map[string][]byte{
+		"a_test.go": []byte("one\n  two\n\nthree\n"),
+		"b_test.go": []byte("four\nfour\n"),
+		"bin_test":  []byte("x\x00y\n"),
+	}
+	head := map[string][]byte{
+		"c_test.go": []byte("two\nfour\n"), // two moved; one four kept
+	}
+	n, cs := TestLinesRemoved(base, head)
+	if n != 3 { // one, three, and the second four
+		t.Fatalf("removed = %d, want 3", n)
+	}
+	if len(cs) != 2 || cs[0].File != "a_test.go" || cs[0].Value != 2 || !cs[0].Deleted {
+		t.Errorf("contributors = %+v", cs)
+	}
+}

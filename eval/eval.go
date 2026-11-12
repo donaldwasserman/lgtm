@@ -17,7 +17,7 @@ import (
 // implemented for the change's languages. An unavailable score never forces
 // review.
 //
-// The JSON names are the report's wire format (schemaVersion 3), which the
+// The JSON names are the report's wire format (schemaVersion 4), which the
 // action and users' own workflow steps read by these exact names.
 type Scores struct {
 	// EditDepth is how deep the deepest change to existing code reaches:
@@ -26,7 +26,9 @@ type Scores struct {
 	EditDepth int `json:"editDepth"`
 	// NewDepth is the same measure for inserted code. Reported, never gated.
 	NewDepth int `json:"newDepth"`
-	// BreadthFiles is the number of non-test files with a substantive change.
+	// BreadthFiles is the number of non-test files whose existing code
+	// changed substantively. New files and new symbols do not count: new
+	// code is judged by lines added and new-function complexity.
 	BreadthFiles int `json:"breadthFiles"`
 	// BreadthModules is the number of packages those files belong to.
 	BreadthModules *int `json:"breadthModules"`
@@ -36,6 +38,10 @@ type Scores struct {
 	// UncoveredFiles is the number of changed files no measure could look at
 	// and the configuration does not ignore.
 	UncoveredFiles int `json:"uncoveredFiles"`
+	// TestLinesRemoved is the number of non-blank lines that disappeared
+	// from test files: present on the base side and not found again on the
+	// head side in any test file, so a moved test counts for nothing.
+	TestLinesRemoved int `json:"testLinesRemoved"`
 	// CogDelta is the largest increase in cognitive complexity among
 	// functions that exist on both sides.
 	CogDelta *int `json:"cogDelta"`
@@ -51,6 +57,8 @@ type Scores struct {
 	CalledSignificance *Level `json:"calledSignificance"`
 	// BlastRadius is the number of symbols that call a changed existing
 	// symbol, within three hops, excluding the changed symbols themselves.
+	// Only changes of at least medium significance count: a statement or
+	// constant edit in a widely called function has no blast radius.
 	BlastRadius *int `json:"blastRadius"`
 }
 
@@ -65,15 +73,16 @@ type Facts struct {
 // Gate is one team's configuration: one threshold per measure. A nil
 // threshold is switched off. Thresholds are never zero; Validate rejects it.
 type Gate struct {
-	ThetaDepth        *int   `json:"thetaDepth"`
-	ThetaBreadth      *int   `json:"thetaBreadth"`
-	ThetaModules      *int   `json:"thetaModules"`
-	ThetaLines        *int   `json:"thetaLines"`
-	ThetaUncovered    *int   `json:"thetaUncovered"`
-	ThetaCog          *int   `json:"thetaCog"`
-	ThetaNewFunction  *int   `json:"thetaNewFunction"`
-	ThetaSignificance *Level `json:"thetaSignificance"`
-	ThetaBlast        *int   `json:"thetaBlast"`
+	ThetaDepth         *int   `json:"thetaDepth"`
+	ThetaBreadth       *int   `json:"thetaBreadth"`
+	ThetaModules       *int   `json:"thetaModules"`
+	ThetaLines         *int   `json:"thetaLines"`
+	ThetaUncovered     *int   `json:"thetaUncovered"`
+	ThetaCog           *int   `json:"thetaCog"`
+	ThetaNewFunction   *int   `json:"thetaNewFunction"`
+	ThetaSignificance  *Level `json:"thetaSignificance"`
+	ThetaBlast         *int   `json:"thetaBlast"`
+	ThetaTestDeletions *int   `json:"thetaTestDeletions"`
 }
 
 // On returns a threshold that is switched on at v.
@@ -85,26 +94,28 @@ func LevelOn(l Level) *Level { return &l }
 // DefaultGate is the "balanced" preset. It mirrors `defaults` in
 // alloy/gate_scenarios.als.
 var DefaultGate = Gate{
-	ThetaBreadth:      On(15),
-	ThetaModules:      On(4),
-	ThetaLines:        On(1000),
-	ThetaUncovered:    On(1),
-	ThetaCog:          On(5),
-	ThetaNewFunction:  On(25),
-	ThetaSignificance: LevelOn(Crucial),
-	ThetaBlast:        On(30),
+	ThetaBreadth:       On(15),
+	ThetaModules:       On(4),
+	ThetaLines:         On(1000),
+	ThetaUncovered:     On(1),
+	ThetaCog:           On(5),
+	ThetaNewFunction:   On(25),
+	ThetaSignificance:  LevelOn(Crucial),
+	ThetaBlast:         On(30),
+	ThetaTestDeletions: On(100),
 }
 
 // StrictGate is the "strict" preset, for code where a wrong change is costly.
 var StrictGate = Gate{
-	ThetaBreadth:      On(8),
-	ThetaModules:      On(3),
-	ThetaLines:        On(400),
-	ThetaUncovered:    On(1),
-	ThetaCog:          On(3),
-	ThetaNewFunction:  On(15),
-	ThetaSignificance: LevelOn(Medium),
-	ThetaBlast:        On(15),
+	ThetaBreadth:       On(8),
+	ThetaModules:       On(3),
+	ThetaLines:         On(400),
+	ThetaUncovered:     On(1),
+	ThetaCog:           On(3),
+	ThetaNewFunction:   On(15),
+	ThetaSignificance:  LevelOn(Medium),
+	ThetaBlast:         On(15),
+	ThetaTestDeletions: On(50),
 }
 
 // Presets are the named gates a configuration can start from.
@@ -132,7 +143,7 @@ func (g Gate) Validate() error {
 
 // ThresholdNames lists every threshold, by the name configuration uses.
 var ThresholdNames = []string{"depth", "breadth", "modules", "lines", "uncovered",
-	"cog", "new-function", "significance", "blast"}
+	"cog", "new-function", "significance", "blast", "test-deletions"}
 
 // count returns the field of a numeric threshold, or nil for any other name.
 func (g *Gate) count(name string) **int {
@@ -153,6 +164,8 @@ func (g *Gate) count(name string) **int {
 		return &g.ThetaNewFunction
 	case "blast":
 		return &g.ThetaBlast
+	case "test-deletions":
+		return &g.ThetaTestDeletions
 	}
 	return nil
 }
@@ -226,6 +239,7 @@ const (
 	// something calls.
 	ReasonCalledSignature Reason = "called-exported-signature"
 	ReasonBlastRadius     Reason = "blast-radius"
+	ReasonTestDeletions   Reason = "test-deletions"
 )
 
 // Decision is the gate's answer and every rule that contributed to it.
@@ -266,6 +280,9 @@ func Evaluate(s Scores, f Facts, g Gate) Decision {
 	}
 	if reaches(&s.UncoveredFiles, g.ThetaUncovered) {
 		rs = append(rs, ReasonUncovered)
+	}
+	if reaches(&s.TestLinesRemoved, g.ThetaTestDeletions) {
+		rs = append(rs, ReasonTestDeletions)
 	}
 	if reaches(s.CogDelta, g.ThetaCog) {
 		rs = append(rs, ReasonCogDelta)

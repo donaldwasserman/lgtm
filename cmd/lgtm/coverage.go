@@ -1,6 +1,10 @@
 package main
 
 import (
+	"errors"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"sort"
 
 	"github.com/donaldwasserman/lgtm/eval"
@@ -31,11 +35,14 @@ type tree struct {
 	syms  *symbols.Table
 }
 
-// substantiveFiles lists the changed non-test files whose change could alter
-// behaviour: a symbol changed in more than name, a symbol appeared, or
-// top-level code outside any symbol changed. A sweep of comments, formatting,
-// local renames or moves counts for nothing.
-func substantiveFiles(res *diff.Result, rated []significance.Rated, pairs []symbols.Pair, base, head tree, tests *parse.Globs) []string {
+// substantiveFiles lists the changed non-test files whose existing code
+// changed in a way that could alter behaviour: an existing symbol changed in
+// more than name, or top-level code outside any symbol changed in a file that
+// already existed. A sweep of comments, formatting, local renames or moves
+// counts for nothing, and so does new code: new files and new symbols are
+// judged by lines added and new-function complexity, so a feature built
+// mostly from new code is not "wide" however many files it adds.
+func substantiveFiles(res *diff.Result, rated []significance.Rated, base, head tree, tests *parse.Globs) []string {
 	set := map[string]bool{}
 	for _, r := range rated {
 		if r.Level == eval.None {
@@ -47,12 +54,10 @@ func substantiveFiles(res *diff.Result, rated []significance.Rated, pairs []symb
 			set[r.Symbol().File] = true
 		}
 	}
-	for _, p := range pairs {
-		if p.Base == nil {
-			set[p.Head.File] = true
-		}
-	}
 	for _, fc := range res.Files {
+		if fc.Kind == model.KindInsert {
+			continue
+		}
 		if base.syms.Residual(base.files[fc.Path]) != head.syms.Residual(head.files[fc.Path]) {
 			set[fc.Path] = true
 		}
@@ -102,4 +107,40 @@ func moduleRefs(modules []string) []moduleRef {
 		out = append(out, moduleRef{m})
 	}
 	return out
+}
+
+// blastFloor is the lowest significance whose change counts toward blast
+// radius: conditions, error handling and anything stronger.
+const blastFloor = eval.Medium
+
+// testFiles reads the changed files on test paths from both trees, parsed or
+// not, keyed by path. A file missing on one side is absent from that map.
+func testFiles(base, head string, res *diff.Result, others []parse.Unscanned, tests *parse.Globs) (map[string][]byte, map[string][]byte, error) {
+	var paths []string
+	for _, fc := range res.Files {
+		paths = append(paths, fc.Path)
+	}
+	for _, o := range others {
+		paths = append(paths, o.Path)
+	}
+	b, h := map[string][]byte{}, map[string][]byte{}
+	for _, p := range paths {
+		if !tests.Match(p) {
+			continue
+		}
+		for _, side := range []struct {
+			root string
+			out  map[string][]byte
+		}{{base, b}, {head, h}} {
+			data, err := os.ReadFile(filepath.Join(side.root, filepath.FromSlash(p)))
+			if errors.Is(err, fs.ErrNotExist) {
+				continue
+			}
+			if err != nil {
+				return nil, nil, err
+			}
+			side.out[p] = data
+		}
+	}
+	return b, h, nil
 }

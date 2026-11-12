@@ -57,14 +57,15 @@ the branch split off.
 | `head` | *(empty)* | Instead of `base-ref`: folder with the code after the change |
 | `image` | matches the action version | `lgtm` image to run. Used as-is if already on the runner, so a workflow can build its own |
 | `preset` | *(empty)* | `balanced` or `strict`. Empty uses `.lgtm.yml`, then `balanced` |
-| `theta-breadth` | *(preset: 15)* | Files touched that require review |
+| `theta-breadth` | *(preset: 15)* | Files touched (existing code changed; new files don't count) that require review |
 | `theta-modules` | *(preset: 4)* | Modules touched that require review |
 | `theta-lines` | *(preset: 1000)* | Lines added that require review |
 | `theta-uncovered` | *(preset: 1)* | Uncovered files that require review |
 | `theta-cog` | *(preset: 5)* | Increase in one existing function's cognitive complexity that requires review |
 | `theta-new-function` | *(preset: 25)* | Cognitive complexity of one new function that requires review |
 | `theta-significance` | *(preset: `crucial`)* | Significance level (`low`, `medium`, `high`, `crucial`) that requires review. While on, an exported signature change to something with callers also does |
-| `theta-blast` | *(preset: 30)* | Blast radius (callers within three hops of what changed) that requires review |
+| `theta-blast` | *(preset: 30)* | Blast radius (callers within three hops of code whose logic changed) that requires review |
+| `theta-test-deletions` | *(preset: 100)* | Non-blank lines removed from test files that require review. Moved tests don't count |
 | `theta-depth` | *(preset: off)* | Edit depth that requires review |
 | `exclude` | | Globs of paths to leave out of the scan, one per line (e.g. `**/*.pb.go`). `!entry` removes a built-in entry, such as `!build` |
 | `check-name` | `LGTM / review-gate` | Name of the check. Empty turns the check off |

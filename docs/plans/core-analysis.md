@@ -10,7 +10,7 @@ or adds to it.
 > replaced by counting substantive changes
 > ([ADR 0003](../adr/0003-edit-depth-is-not-in-the-default-gate.md),
 > [ADR 0004](../adr/0004-the-gate-does-not-know-who-wrote-a-change.md)). The
-> report is now `schemaVersion` 3. Current defaults are in the README.
+> report is now `schemaVersion` 4. Current defaults are in the README.
 
 Vocabulary is defined in [GLOSSARY.md](../../GLOSSARY.md). The two
 decisions that shape everything else are recorded as ADRs:
