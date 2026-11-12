@@ -3,10 +3,10 @@
 Each version's section becomes its GitHub release notes. Versioning rules are
 in [docs/releasing.md](docs/releasing.md#version-numbers).
 
-## Unreleased
+## 0.0.6
 
 Changes how the gate decides, and the report format (`schemaVersion` 4). See
-[docs/adr/0005-new-code-is-not-wide-and-blast-counts-logic.md](docs/adr/0005-new-code-is-not-wide-and-blast-counts-logic.md).
+[docs/adr/0005-new-code-is-not-wide-and-blast-counts-logic.md](https://github.com/donaldwasserman/lgtm/blob/v0.0.6/docs/adr/0005-new-code-is-not-wide-and-blast-counts-logic.md).
 
 - Files and modules touched count only files whose existing code changed. New
   files and new symbols no longer count, so a feature built from new code is
