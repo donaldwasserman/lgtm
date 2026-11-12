@@ -42,18 +42,20 @@ func TestAnalyzeRequiresReview(t *testing.T) {
 		},
 		{
 			name: "broad_change_triggers",
-			base: map[string]string{},
-			head: func() map[string]string {
-				m := map[string]string{}
-				for i := 0; i < 16; i++ {
-					m[filepath.Join("pkg", "f"+string(rune('a'+i))+".go")] =
-						"package p\nfunc X( ){}\n"
-				}
-				return m
-			}(),
-			// 16 new files in one package => breadth 16 >= thetaBreadth 15
+			base: broadFiles("func X(){}\n"),
+			head: broadFiles("func X(){ y() }\n"),
+			// 16 edited files in one package => breadth 16 >= thetaBreadth 15
 			thr:    eval.DefaultGate,
 			expect: true,
+		},
+		{
+			// The same 16 files added as new code are not wide: new code is
+			// judged by lines added and new-function complexity.
+			name:   "broad_addition_passes",
+			base:   map[string]string{},
+			head:   broadFiles("func X(){}\n"),
+			thr:    eval.DefaultGate,
+			expect: false,
 		},
 		{
 			// Regression: breadth once counted every file in the tree, so a
@@ -437,8 +439,13 @@ func TestConstantsAreSymbols(t *testing.T) {
 			if *rep.Scores.Significance != eval.Low {
 				t.Errorf("significance = %v, want low", *rep.Scores.Significance)
 			}
-			if *rep.Scores.BlastRadius != 1 {
-				t.Errorf("blastRadius = %d, want its one reader", *rep.Scores.BlastRadius)
+			// A new constant value is a low change: its reader is reported
+			// through calledSignificance, but it has no blast radius.
+			if *rep.Scores.CalledSignificance != eval.Low {
+				t.Errorf("calledSignificance = %v, want low: G reads it", *rep.Scores.CalledSignificance)
+			}
+			if *rep.Scores.BlastRadius != 0 {
+				t.Errorf("blastRadius = %d, want 0 for a low change", *rep.Scores.BlastRadius)
 			}
 		})
 	}
@@ -472,5 +479,97 @@ func TestOverrideTightensTheGate(t *testing.T) {
 	}
 	if rep = analyzeFiles(t, base, head, config.Default()); rep.RequiresReview {
 		t.Errorf("without the override this passes: %v", rep.Reasons)
+	}
+}
+
+// TestBlastCountsLogicChanges: blast radius asks how much depends on a
+// change to logic, so a statement edit in a widely called function has none
+// and a condition edit in the same function has its callers.
+func TestBlastCountsLogicChanges(t *testing.T) {
+	var callers strings.Builder
+	for i := 0; i < 40; i++ {
+		callers.WriteString("func C" + strconv.Itoa(i) + "() { Check(1) }\n")
+	}
+	const base = "package a\n\nfunc Check(n int) bool {\n\tlog(n)\n\tif n > 0 {\n\t\treturn true\n\t}\n\treturn false\n}\n"
+	statement := strings.Replace(base, "log(n)", "log(n, 2)", 1)
+	condition := strings.Replace(base, "n > 0", "n >= 0", 1)
+	files := func(src string) map[string]string {
+		return map[string]string{"a.go": src, "callers.go": "package a\n\n" + callers.String()}
+	}
+
+	rep := analyzeFiles(t, files(base), files(statement), config.Default())
+	if *rep.Scores.BlastRadius != 0 || rep.RequiresReview {
+		t.Errorf("statement edit: blast %d, reasons %v", *rep.Scores.BlastRadius, rep.Reasons)
+	}
+	rep = analyzeFiles(t, files(base), files(condition), config.Default())
+	if *rep.Scores.BlastRadius != 40 || !hasReason(rep, eval.ReasonBlastRadius) {
+		t.Errorf("condition edit: blast %d, reasons %v", *rep.Scores.BlastRadius, rep.Reasons)
+	}
+}
+
+// TestFeatureAdditionPasses: a new form, endpoint and business logic, spread
+// over several new packages and wired in with one small edit, is not wide.
+func TestFeatureAdditionPasses(t *testing.T) {
+	base := map[string]string{
+		"server/routes.go": "package server\n\nfunc Routes(r R) {\n\tr.Get(\"/a\", a)\n}\n",
+	}
+	head := map[string]string{
+		"server/routes.go":  "package server\n\nfunc Routes(r R) {\n\tr.Get(\"/a\", a)\n\tr.Post(\"/orders\", orders.Create)\n}\n",
+		"orders/handler.go": "package orders\n\nfunc Create(w W, r Q) {\n\to, err := Decode(r)\n\tif err != nil {\n\t\tw.Fail(err)\n\t\treturn\n\t}\n\tw.OK(Save(o))\n}\n",
+		"orders/logic.go":   "package orders\n\nfunc Save(o Order) Order {\n\tif o.Total < 0 {\n\t\to.Total = 0\n\t}\n\treturn store.Put(o)\n}\n",
+		"orders/decode.go":  "package orders\n\nfunc Decode(r Q) (Order, error) { return parse(r.Body) }\n",
+		"store/orders.go":   "package store\n\nfunc Put(o any) any { return o }\n",
+		"web/form.ts":       "export function OrderForm(props: { onSubmit: () => void }) {\n  return props.onSubmit;\n}\n",
+		"web/api.ts":        "export async function createOrder(body: unknown) {\n  return fetch('/orders', { method: 'POST', body: JSON.stringify(body) });\n}\n",
+	}
+	rep := analyzeFiles(t, base, head, config.Default())
+	if rep.Scores.BreadthFiles != 1 || *rep.Scores.BreadthModules != 1 || rep.RequiresReview {
+		t.Errorf("files %d, modules %d, reasons %v", rep.Scores.BreadthFiles, *rep.Scores.BreadthModules, rep.Reasons)
+	}
+}
+
+// TestTestDeletions: deleting tests en masse requires review; moving them or
+// rewriting a few lines does not.
+func TestTestDeletions(t *testing.T) {
+	var suite strings.Builder
+	suite.WriteString("package a\n\n")
+	for i := 0; i < 30; i++ {
+		n := strconv.Itoa(i)
+		suite.WriteString("func TestCase" + n + "(t *testing.T) {\n\tgot := F(" + n + ")\n\tif got != " + n + " {\n\t\tt.Fatal(got)\n\t}\n}\n\n")
+	}
+	src := map[string]string{"a.go": "package a\n\nfunc F(n int) int { return n }\n"}
+	with := func(tests map[string]string) map[string]string {
+		m := map[string]string{}
+		for k, v := range src {
+			m[k] = v
+		}
+		for k, v := range tests {
+			m[k] = v
+		}
+		return m
+	}
+	full := with(map[string]string{"a_test.go": suite.String()})
+
+	rep := analyzeFiles(t, full, src, config.Default())
+	if rep.Scores.TestLinesRemoved < 100 || !hasReason(rep, eval.ReasonTestDeletions) {
+		t.Errorf("deleted suite: removed %d, reasons %v", rep.Scores.TestLinesRemoved, rep.Reasons)
+	}
+	rep = analyzeFiles(t, full, with(map[string]string{"moved_test.go": suite.String()}), config.Default())
+	if rep.Scores.TestLinesRemoved != 0 || rep.RequiresReview {
+		t.Errorf("moved suite: removed %d, reasons %v", rep.Scores.TestLinesRemoved, rep.Reasons)
+	}
+	edited := strings.Replace(suite.String(), "t.Fatal(got)", "t.Errorf(\"got %d\", got)", 3)
+	rep = analyzeFiles(t, full, with(map[string]string{"a_test.go": edited}), config.Default())
+	if rep.Scores.TestLinesRemoved != 3 || rep.RequiresReview {
+		t.Errorf("edited suite: removed %d, reasons %v", rep.Scores.TestLinesRemoved, rep.Reasons)
+	}
+	// Fixtures are on a test path too, parsed or not.
+	var fixture strings.Builder
+	for i := 0; i < 120; i++ {
+		fixture.WriteString("{\"case\": " + strconv.Itoa(i) + "}\n")
+	}
+	rep = analyzeFiles(t, with(map[string]string{"testdata/cases.jsonl": fixture.String()}), src, config.Default())
+	if rep.Scores.TestLinesRemoved != 120 || !hasReason(rep, eval.ReasonTestDeletions) {
+		t.Errorf("deleted fixture: removed %d, reasons %v", rep.Scores.TestLinesRemoved, rep.Reasons)
 	}
 }

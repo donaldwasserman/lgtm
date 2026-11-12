@@ -228,7 +228,7 @@ func instanceToScenario(inst Instance) (Scenario, error) {
 		}
 	}
 	for _, req := range []string{"edit_depth", "breadth_files", "lines_added",
-		"uncovered_files", "unparsed", "always_review"} {
+		"uncovered_files", "test_lines_removed", "unparsed", "always_review"} {
 		if _, ok := s.Fields[req]; !ok {
 			return Scenario{}, fmt.Errorf("instance has no value for %s", req)
 		}
@@ -252,6 +252,7 @@ var goFields = []struct{ label, owner, field, kind string }{
 	{"breadth_files", "scores", "BreadthFiles", "int"},
 	{"lines_added", "scores", "LinesAdded", "hundreds"},
 	{"uncovered_files", "scores", "UncoveredFiles", "int"},
+	{"test_lines_removed", "scores", "TestLinesRemoved", "int"},
 	{"breadth_modules", "scores", "BreadthModules", "*int"},
 	{"cog_delta", "scores", "CogDelta", "*int"},
 	{"new_function_complexity", "scores", "NewFunctionComplexity", "*int"},
@@ -269,6 +270,7 @@ var goFields = []struct{ label, owner, field, kind string }{
 	{"theta_new_function", "gate", "ThetaNewFunction", "*int"},
 	{"theta_significance", "gate", "ThetaSignificance", "*level"},
 	{"theta_blast", "gate", "ThetaBlast", "*int"},
+	{"theta_test_deletions", "gate", "ThetaTestDeletions", "*int"},
 }
 
 // literal renders one owner's struct literal. Absent pointer fields are left

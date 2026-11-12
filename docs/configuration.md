@@ -47,6 +47,7 @@ change to `.lgtm.yml` itself needs review by default.
 | `new-function` | `theta-new-function` | 25 | 15 |
 | `significance` | `theta-significance` | `crucial` | `medium` |
 | `blast` | `theta-blast` | 30 | 15 |
+| `test-deletions` | `theta-test-deletions` | 100 | 50 |
 | `depth` | `theta-depth` | off | off |
 
 The numbers are starting points, not measured optima. `strict` flags every
@@ -76,6 +77,10 @@ directories, and a pattern matching a directory covers everything under it.
 | `test-paths` | `*_test.go` `test_*.py` `*_test.py` `conftest.py` `*_test.rb` `*_spec.rb` `*.test.*` `*.spec.*` `*Test.java` `*Tests.java` `__tests__` `test` `tests` `spec` `testdata` |
 | `uncovered-ignore` | `*.md` `*.mdx` `*.rst` `*.txt` `docs` `LICENSE*` `NOTICE*` `AUTHORS*` `.gitignore` `.gitattributes` `.editorconfig` `*.png` `*.jpg` `*.jpeg` `*.gif` `*.svg` `*.ico` `*.webp` |
 | `always-review` | `.github/workflows` `/.lgtm.yml` |
+
+Files on `test-paths` aren't counted in files, modules or lines added, but
+lines removed from them count toward `test-deletions`, so deleting tests or
+fixtures en masse still requires review.
 
 Excluded paths are invisible: they aren't parsed, counted, or matched by
 `always-review`. They are still searched as text when deciding whether a deleted
@@ -185,6 +190,18 @@ patterns are additive, so the built-in list still applies.
       web
       mobile
 ```
+
+### Feature work passes, rewrites of existing code don't
+
+The default gate already works this way. New files and new functions don't
+count toward files or modules touched, and blast radius counts only callers of
+code whose logic changed. A pull request that adds a form, an endpoint and the
+logic behind them passes as long as it stays under the line limit and its new
+functions stay readable. Editing conditions in code half the codebase calls,
+or changing existing code across many files, requires review.
+
+If one route-registration file is wired into on every feature, keep it off
+`always-review`, or every feature will need a person.
 
 ### A rule the thresholds can't express
 
