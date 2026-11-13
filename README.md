@@ -80,7 +80,7 @@ jobs:
           BASE_REF: ${{ github.event.pull_request.base.ref }}
         run: git fetch --no-tags origin "$BASE_REF"
 
-      - uses: donaldwasserman/lgtm@v0
+      - uses: donaldwasserman/lgtm@latest
         with:
           base-ref: origin/${{ github.event.pull_request.base.ref }}
 ```
