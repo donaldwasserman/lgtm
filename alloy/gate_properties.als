@@ -36,6 +36,7 @@ assert MonotoneInScores {
      atLeast[a.breadth_files, b.breadth_files] and
      atLeast[a.lines_added, b.lines_added] and
      atLeast[a.uncovered_files, b.uncovered_files] and
+     atLeast[a.test_lines_removed, b.test_lines_removed] and
      atLeast[a.breadth_modules, b.breadth_modules] and
      atLeast[a.cog_delta, b.cog_delta] and
      atLeast[a.new_function_complexity, b.new_function_complexity] and
@@ -60,6 +61,7 @@ pred fewerOn[g1, g2: Gate] {
   g1.theta_new_function in g2.theta_new_function
   g1.theta_significance in g2.theta_significance
   g1.theta_blast in g2.theta_blast
+  g1.theta_test_deletions in g2.theta_test_deletions
 }
 
 assert SwitchingOffNeverForcesReview {
@@ -70,7 +72,7 @@ assert SwitchingOffNeverForcesReview {
 pred allOff[g: Gate] {
   no g.theta_depth + g.theta_breadth + g.theta_modules + g.theta_lines +
      g.theta_uncovered + g.theta_cog + g.theta_new_function +
-     g.theta_significance + g.theta_blast
+     g.theta_significance + g.theta_blast + g.theta_test_deletions
 }
 
 assert AllOffLeavesOnlyForcedRules {
@@ -85,7 +87,9 @@ assert UnavailableFallsBackToUniversal {
     implies (requiresReview[s, g] iff (forced[s] or universalFires[s, g]))
 }
 
--- Narrow pure additions with readable new functions still pass.
+-- Pure additions with readable new functions pass, however many files and
+-- modules they add (breadth counts only files whose existing code changed),
+-- as long as they stay under the line limit.
 assert NewCodeExemption {
   all s: Scores, g: Gate |
     (not forced[s] and s.touches_existing = FALSE and

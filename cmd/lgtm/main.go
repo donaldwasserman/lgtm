@@ -44,7 +44,13 @@ import (
 // 3: facts.trusted, facts.analysisFailed, scores.depthTotal and
 // gate.epsilonTrivial were removed; scores.breadthFiles and breadthModules
 // count only substantive changes to non-test files.
-const schemaVersion = 3
+//
+// 4: scores.breadthFiles and breadthModules count only files whose existing
+// code changed (new files and new symbols no longer count);
+// scores.blastRadius counts only callers of changes of at least medium
+// significance; scores.testLinesRemoved and gate.thetaTestDeletions were
+// added.
+const schemaVersion = 4
 
 const (
 	verdictReviewRequired = "review-required"
@@ -252,7 +258,12 @@ func analyze(base, head string, cfg *config.Resolved) (report, bool, error) {
 		if r.Level == eval.None {
 			continue // locals renamed: nothing a caller can observe
 		}
-		changed = append(changed, r.Symbol())
+		// Blast radius asks how much depends on a change to logic. A
+		// statement or constant edit (low) in a widely called function
+		// would otherwise cost as much as removing a check from it.
+		if r.Level >= blastFloor {
+			changed = append(changed, r.Symbol())
+		}
 		if len(graph.Callers(r.Symbol())) > 0 {
 			called = max(called, r.Level)
 		}
@@ -261,7 +272,7 @@ func analyze(base, head string, cfg *config.Resolved) (report, bool, error) {
 	scores.BlastRadius, scores.CalledSignificance = &br.Radius, &called
 	contributors["blastRadius"] = br.Contributors
 
-	breadth := substantiveFiles(res, sig.Rated, pairs, tree{baseFiles, baseSyms}, tree{headFiles, headSyms}, cfg.Tests)
+	breadth := substantiveFiles(res, sig.Rated, tree{baseFiles, baseSyms}, tree{headFiles, headSyms}, cfg.Tests)
 	scores.BreadthFiles = len(breadth)
 	contributors["breadthFiles"] = fileRefs(breadth)
 	modules := symbols.Modules(breadth, baseSyms, headSyms)
@@ -273,9 +284,21 @@ func analyze(base, head string, cfg *config.Resolved) (report, bool, error) {
 	scores.LinesAdded = lines
 	contributors["linesAdded"] = lineContributors
 
+	testBase, testHead, err := testFiles(base, head, res, others, cfg.Tests)
+	if err != nil {
+		return report{}, false, err
+	}
+	removed, removedContributors := metrics.TestLinesRemoved(testBase, testHead)
+	scores.TestLinesRemoved = removed
+	contributors["testLinesRemoved"] = removedContributors
+
 	files, uncovered, styles := coverage(others, cfg, base, head)
 	for _, st := range styles {
-		breadth = append(breadth, st.path)
+		// Like code, only a stylesheet that already existed is "touched"; a
+		// new one is judged by the lines it adds.
+		if st.kind != model.KindInsert {
+			breadth = append(breadth, st.path)
+		}
 		scores.LinesAdded += st.added
 		if st.added > 0 {
 			lineContributors = append(lineContributors, metrics.Contributor{File: st.path, Value: st.added})

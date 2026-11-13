@@ -26,6 +26,7 @@ pred defaults[g: Gate] {
   int[g.theta_new_function] = 25
   int[g.theta_significance] = 4
   int[g.theta_blast] = 30
+  int[g.theta_test_deletions] = 100
 }
 
 pred noNewScores[s: Scores] {
@@ -38,8 +39,13 @@ pred plain[s: Scores] {
 }
 
 pred universal[s: Scores, edit, files, lines, uncovered: Int] {
+  universalTests[s, edit, files, lines, uncovered, 0]
+}
+
+pred universalTests[s: Scores, edit, files, lines, uncovered, testsRemoved: Int] {
   int[s.edit_depth] = edit and int[s.breadth_files] = files
   int[s.lines_added] = lines and int[s.uncovered_files] = uncovered
+  int[s.test_lines_removed] = testsRemoved
 }
 
 -- Every symbol-based score available, with the given values. `one` matters:
@@ -56,7 +62,7 @@ pred newScores[s: Scores, modules, cog, newFn, level, called, blast: Int] {
 pred allOff[g: Gate] {
   no g.theta_depth + g.theta_breadth + g.theta_modules + g.theta_lines +
      g.theta_uncovered + g.theta_cog + g.theta_new_function +
-     g.theta_significance + g.theta_blast
+     g.theta_significance + g.theta_blast + g.theta_test_deletions
 }
 
 ------------------------------------------------------------------------
@@ -157,18 +163,42 @@ run scenario_uncalledExportedSignature {
 -- has callers.
 
 run scenario_uncalledSignatureBesideCalledEdit {
-  all s: Scores, g: Gate | defaults[g] and plain[s] and newScores[s, 2, 0, 0, 3, 1, 10] and
+  all s: Scores, g: Gate | defaults[g] and plain[s] and newScores[s, 2, 0, 0, 3, 2, 10] and
     universal[s, 2, 2, 1, 0] and s.touches_existing = TRUE and not requiresReview[s, g]
 } for 8 Int, exactly 1 Scores, exactly 1 Gate
 
 run scenario_blastAt30 {
-  all s: Scores, g: Gate | defaults[g] and plain[s] and newScores[s, 1, 0, 0, 1, 1, 30] and
+  all s: Scores, g: Gate | defaults[g] and plain[s] and newScores[s, 1, 0, 0, 2, 2, 30] and
     universal[s, 2, 1, 1, 0] and s.touches_existing = TRUE and requiresReview[s, g]
 } for 8 Int, exactly 1 Scores, exactly 1 Gate
 
 run scenario_blastAt29 {
-  all s: Scores, g: Gate | defaults[g] and plain[s] and newScores[s, 1, 0, 0, 1, 1, 29] and
+  all s: Scores, g: Gate | defaults[g] and plain[s] and newScores[s, 1, 0, 0, 2, 2, 29] and
     universal[s, 2, 1, 1, 0] and s.touches_existing = TRUE and not requiresReview[s, g]
+} for 8 Int, exactly 1 Scores, exactly 1 Gate
+
+-- A statement or constant edit in a function everything calls: blast
+-- radius counts only changes of at least medium significance, so it is 0.
+run scenario_lowEditInWidelyCalledFunction {
+  all s: Scores, g: Gate | defaults[g] and plain[s] and newScores[s, 1, 0, 0, 1, 1, 0] and
+    universal[s, 2, 1, 1, 0] and s.touches_existing = TRUE and not requiresReview[s, g]
+} for 8 Int, exactly 1 Scores, exactly 1 Gate
+
+-- A new form, endpoint and business logic: many new files in several
+-- modules, wired in with a small edit. Only the wiring counts as breadth.
+run scenario_featureAddition {
+  all s: Scores, g: Gate | defaults[g] and plain[s] and newScores[s, 2, 0, 18, 1, 1, 0] and
+    universal[s, 2, 2, 6, 0] and s.touches_existing = TRUE and not requiresReview[s, g]
+} for 8 Int, exactly 1 Scores, exactly 1 Gate
+
+run scenario_testDeletionsAt100 {
+  all s: Scores, g: Gate | defaults[g] and plain[s] and newScores[s, 0, 0, 0, 0, 0, 0] and
+    universalTests[s, 0, 0, 0, 0, 100] and s.touches_existing = FALSE and requiresReview[s, g]
+} for 8 Int, exactly 1 Scores, exactly 1 Gate
+
+run scenario_testDeletionsAt99 {
+  all s: Scores, g: Gate | defaults[g] and plain[s] and newScores[s, 0, 0, 0, 0, 0, 0] and
+    universalTests[s, 0, 0, 0, 0, 99] and s.touches_existing = FALSE and not requiresReview[s, g]
 } for 8 Int, exactly 1 Scores, exactly 1 Gate
 
 run scenario_exportedSignatureBlastUnavailable {
@@ -220,7 +250,7 @@ run scenario_allOffAlwaysReview {
 
 run scenario_allOffDeepAndWide {
   all s: Scores, g: Gate | allOff[g] and plain[s] and newScores[s, 9, 40, 60, 4, 4, 100] and
-    universal[s, 20, 30, 1, 9] and s.touches_existing = TRUE and not requiresReview[s, g]
+    universalTests[s, 20, 30, 1, 9, 120] and s.touches_existing = TRUE and not requiresReview[s, g]
 } for 8 Int, exactly 1 Scores, exactly 1 Gate
 
 ------------------------------------------------------------------------
@@ -231,6 +261,7 @@ run scenario_depthSwitchedOn {
     int[g.theta_breadth] = 25 and int[g.theta_modules] = 4 and int[g.theta_lines] = 70 and
     int[g.theta_uncovered] = 1 and int[g.theta_cog] = 5 and int[g.theta_new_function] = 25 and
     int[g.theta_significance] = 4 and int[g.theta_blast] = 30 and
+    int[g.theta_test_deletions] = 100 and
     plain[s] and newScores[s, 1, 0, 0, 1, 0, 0] and
     universal[s, 7, 1, 1, 0] and s.touches_existing = TRUE and requiresReview[s, g]
 } for 8 Int, exactly 1 Scores, exactly 1 Gate
@@ -240,6 +271,7 @@ run scenario_uncoveredSwitchedOff {
     int[g.theta_breadth] = 25 and int[g.theta_modules] = 4 and int[g.theta_lines] = 70 and
     int[g.theta_cog] = 5 and int[g.theta_new_function] = 25 and
     int[g.theta_significance] = 4 and int[g.theta_blast] = 30 and
+    int[g.theta_test_deletions] = 100 and
     plain[s] and newScores[s, 0, 0, 0, 0, 0, 0] and
     universal[s, 0, 0, 0, 3] and s.touches_existing = FALSE and not requiresReview[s, g]
 } for 8 Int, exactly 1 Scores, exactly 1 Gate

@@ -1,14 +1,15 @@
 {
-  "schemaVersion": 3,
+  "schemaVersion": 4,
   "verdict": "review-required",
   "requiresReview": true,
   "reasons": ["always-review", "uncovered-files", "cog-delta", "called-exported-signature"],
   "scores": {"editDepth": 9, "newDepth": 2, "breadthFiles": 2, "breadthModules": 1, "linesAdded": 40,
-             "uncoveredFiles": 2, "cogDelta": 6, "newFunctionComplexity": null, "significance": "high",
+             "uncoveredFiles": 2, "testLinesRemoved": 12, "cogDelta": 6, "newFunctionComplexity": null, "significance": "high",
              "calledSignificance": "high", "blastRadius": 3},
   "facts": {"unparsed": false, "alwaysReview": true},
   "gate": {"thetaDepth": null, "thetaBreadth": 15, "thetaModules": 4, "thetaLines": 1000, "thetaUncovered": 1,
-           "thetaCog": 5, "thetaNewFunction": 25, "thetaSignificance": "crucial", "thetaBlast": 30},
+           "thetaCog": 5, "thetaNewFunction": 25, "thetaSignificance": "crucial", "thetaBlast": 30,
+           "thetaTestDeletions": 100},
   "overrides": ["payments"],
   "contributors": {
     "editDepth": [{"file": "a.go", "line": 7, "value": 9}],
@@ -21,6 +22,7 @@
     "significance": [{"symbol": "lib G", "file": "b.go", "line": 3, "level": "high", "parts": ["signature"]},
                      {"symbol": "lib H", "file": "b.go", "line": 90, "level": "crucial", "parts": ["visibility"], "deleted": true}],
     "blastRadius": [{"symbol": "lib G", "file": "b.go", "line": 3, "value": 3}],
+    "testLinesRemoved": [{"file": "a_test.go", "value": 12}],
     "alwaysReview": [{"file": ".github/workflows/x.yml"}]
   },
   "files": [{"path": ".github/workflows/x.yml", "kind": "modify", "coverage": "uncovered"},
