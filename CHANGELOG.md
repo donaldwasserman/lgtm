@@ -3,7 +3,7 @@
 Each version's section becomes its GitHub release notes. Versioning rules are
 in [docs/releasing.md](docs/releasing.md#version-numbers).
 
-## Unreleased
+## 0.0.7
 
 - The default (`balanced`) gate allows more: files touched 15 → 25, lines added 1000 → 7000.
 - Stylesheets (`.css`, `.scss`, `.sass`, `.less`) no longer count as uncovered files.
