@@ -85,9 +85,9 @@ func LevelOn(l Level) *Level { return &l }
 // DefaultGate is the "balanced" preset. It mirrors `defaults` in
 // alloy/gate_scenarios.als.
 var DefaultGate = Gate{
-	ThetaBreadth:      On(15),
+	ThetaBreadth:      On(25),
 	ThetaModules:      On(4),
-	ThetaLines:        On(1000),
+	ThetaLines:        On(7000),
 	ThetaUncovered:    On(1),
 	ThetaCog:          On(5),
 	ThetaNewFunction:  On(25),

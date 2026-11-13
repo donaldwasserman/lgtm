@@ -42,9 +42,9 @@ change to `.lgtm.yml` itself needs review by default.
 
 | Key | Flag and action input | `balanced` | `strict` |
 | --- | --- | --- | --- |
-| `breadth` | `theta-breadth` | 15 | 8 |
+| `breadth` | `theta-breadth` | 25 | 8 |
 | `modules` | `theta-modules` | 4 | 3 |
-| `lines` | `theta-lines` | 1000 | 400 |
+| `lines` | `theta-lines` | 7000 | 400 |
 | `uncovered` | `theta-uncovered` | 1 | 1 |
 | `cog` | `theta-cog` | 5 | 3 |
 | `new-function` | `theta-new-function` | 25 | 15 |

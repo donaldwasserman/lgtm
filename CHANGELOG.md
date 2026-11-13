@@ -5,6 +5,7 @@ in [docs/releasing.md](docs/releasing.md#version-numbers).
 
 ## Unreleased
 
+- The default (`balanced`) gate allows more: files touched 15 → 25, lines added 1000 → 7000.
 - Stylesheets (`.css`, `.scss`, `.sass`, `.less`) no longer count as uncovered files.
   A new `style-paths` list counts their added lines and touched files instead.
   The report's file `coverage` gains `style`.

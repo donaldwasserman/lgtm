@@ -22,9 +22,9 @@ review" or not. You set the thresholds; every one can be switched `off`.
 
 | Measure | Plain meaning | Default threshold |
 | --- | --- | --- |
-| **Files touched** | How many files outside tests have a change that could alter behaviour | 15 |
+| **Files touched** | How many files outside tests have a change that could alter behaviour | 25 |
 | **Modules touched** | How many packages those files belong to | 4 |
-| **Lines added** | How many non-blank lines were added to source files outside tests | 1000 |
+| **Lines added** | How many non-blank lines were added to source files outside tests | 7000 |
 | **Uncovered files** | How many changed files `lgtm` can't read (another language, SQL, YAML) and you haven't told it to ignore | 1 |
 | **Complexity increase** | The most any existing function got harder to read ([cognitive complexity](https://www.sonarsource.com/docs/CognitiveComplexity.pdf)) | 5 |
 | **New-function complexity** | How hard to read the most complex new function is | 25 |
@@ -145,9 +145,9 @@ Git mode needs `git` installed; the Docker image includes it.
 | `--head` | | Folder with the code after the change |
 | `--config` | `.lgtm.yml` in the base tree | Configuration file |
 | `--preset` | `balanced` | Gate to start from: `balanced` or `strict` |
-| `--theta-breadth` | `15` | Files touched that require review |
+| `--theta-breadth` | `25` | Files touched that require review |
 | `--theta-modules` | `4` | Modules touched that require review |
-| `--theta-lines` | `1000` | Lines added that require review |
+| `--theta-lines` | `7000` | Lines added that require review |
 | `--theta-uncovered` | `1` | Uncovered files that require review |
 | `--theta-cog` | `5` | Increase in one existing function's cognitive complexity that requires review |
 | `--theta-new-function` | `25` | Cognitive complexity of one new function that requires review |
@@ -188,7 +188,7 @@ $ lgtm --base before/ --head after/
               "linesAdded": 1, "uncoveredFiles": 0, "cogDelta": 0, "newFunctionComplexity": 0,
               "significance": "high", "calledSignificance": "high", "blastRadius": 1 },
   "facts": { "unparsed": false, "alwaysReview": false },
-  "gate": { "thetaDepth": null, "thetaBreadth": 15, "thetaModules": 4, "thetaLines": 1000,
+  "gate": { "thetaDepth": null, "thetaBreadth": 25, "thetaModules": 4, "thetaLines": 7000,
             "thetaUncovered": 1, "thetaCog": 5, "thetaNewFunction": 25,
             "thetaSignificance": "crucial", "thetaBlast": 30 },
   "overrides": [],

@@ -45,13 +45,13 @@ func TestAnalyzeRequiresReview(t *testing.T) {
 			base: map[string]string{},
 			head: func() map[string]string {
 				m := map[string]string{}
-				for i := 0; i < 16; i++ {
+				for i := 0; i < 26; i++ {
 					m[filepath.Join("pkg", "f"+string(rune('a'+i))+".go")] =
 						"package p\nfunc X( ){}\n"
 				}
 				return m
 			}(),
-			// 16 new files in one package => breadth 16 >= thetaBreadth 15
+			// 26 new files in one package => breadth 26 >= thetaBreadth 25
 			thr:    eval.DefaultGate,
 			expect: true,
 		},
@@ -434,11 +434,11 @@ func TestDepthIsOffByDefault(t *testing.T) {
 func TestLinesAdded(t *testing.T) {
 	var big strings.Builder
 	big.WriteString("package a\n\n")
-	for i := 0; i < 400; i++ {
+	for i := 0; i < 2400; i++ {
 		big.WriteString("func F" + strconv.Itoa(i) + "() {\n\tg()\n}\n\n")
 	}
 	rep := analyzeFiles(t, nil, map[string]string{"big.go": big.String()}, config.Default())
-	if !hasReason(rep, eval.ReasonLinesAdded) || rep.Scores.LinesAdded < 1000 {
+	if !hasReason(rep, eval.ReasonLinesAdded) || rep.Scores.LinesAdded < 7000 {
 		t.Errorf("reasons %v, linesAdded %d", rep.Reasons, rep.Scores.LinesAdded)
 	}
 	rep = analyzeFiles(t, nil, map[string]string{"big_test.go": big.String()}, config.Default())
