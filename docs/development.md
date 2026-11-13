@@ -80,7 +80,8 @@ Gate (`gate_properties.als`), for every configuration:
 - With every threshold off, only the fixed rules remain.
 - With every symbol-based score unavailable, the gate still applies the
   measures that need no symbols: depth, files, lines and uncovered files.
-- Narrow pure additions with readable new functions pass.
+- Pure additions with readable new functions pass under the line limit,
+  however many files and modules they add.
 
 Measures (`blast_radius.als`, `significance.als`):
 

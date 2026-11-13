@@ -60,7 +60,7 @@ inputs:
     required: false
     default: ''
   theta-breadth:
-    description: 'Non-test files with a substantive change at which review is required, or "off". Empty uses the preset.'
+    description: 'Non-test files whose existing code changed (new files do not count) at which review is required, or "off". Empty uses the preset.'
     required: false
     default: ''
   theta-modules:
@@ -96,7 +96,16 @@ inputs:
     required: false
     default: ''
   theta-blast:
-    description: 'Blast radius (callers within 3 hops of changed symbols) at which review is required, or "off". Empty uses the preset.'
+    description: >-
+      Blast radius (callers within 3 hops of symbols whose logic changed: a
+      condition, error handling or more) at which review is required, or
+      "off". Empty uses the preset.
+    required: false
+    default: ''
+  theta-test-deletions:
+    description: >-
+      Non-blank lines removed from test files (moved tests do not count) at
+      which review is required, or "off". Empty uses the preset.
     required: false
     default: ''
   exclude:
@@ -213,6 +222,7 @@ runs:
         LGTM_THETA_NEW_FUNCTION: ${{ inputs.theta-new-function }}
         LGTM_THETA_SIGNIFICANCE: ${{ inputs.theta-significance }}
         LGTM_THETA_BLAST: ${{ inputs.theta-blast }}
+        LGTM_THETA_TEST_DELETIONS: ${{ inputs.theta-test-deletions }}
         LGTM_EXCLUDE: ${{ inputs.exclude }}
       run: |
         set -uo pipefail
@@ -247,7 +257,8 @@ runs:
                     "modules=$LGTM_THETA_MODULES" "lines=$LGTM_THETA_LINES" \
                     "uncovered=$LGTM_THETA_UNCOVERED" "cog=$LGTM_THETA_COG" \
                     "new-function=$LGTM_THETA_NEW_FUNCTION" \
-                    "significance=$LGTM_THETA_SIGNIFICANCE" "blast=$LGTM_THETA_BLAST"; do
+                    "significance=$LGTM_THETA_SIGNIFICANCE" "blast=$LGTM_THETA_BLAST" \
+                    "test-deletions=$LGTM_THETA_TEST_DELETIONS"; do
           [ -n "${pair#*=}" ] && settings+=("--theta-${pair%%=*}" "${pair#*=}")
         done
 
@@ -454,10 +465,11 @@ runs:
             "",
             "| Measure | Score | Threshold | Requires review |",
             "| --- | --- | --- | --- |",
-            "| Files with substantive changes | \(.scores.breadthFiles) | \(.gate.thetaBreadth | th) | \(fired("breadth-files")) |",
+            "| Files whose existing code changed | \(.scores.breadthFiles) | \(.gate.thetaBreadth | th) | \(fired("breadth-files")) |",
             "| Modules touched | \(.scores.breadthModules | sc) | \(.gate.thetaModules | th) | \(fired("breadth-modules")) |",
             "| Lines added | \(.scores.linesAdded) | \(.gate.thetaLines | th) | \(fired("lines-added")) |",
             "| Uncovered files | \(.scores.uncoveredFiles) | \(.gate.thetaUncovered | th) | \(fired("uncovered-files")) |",
+            "| Test lines removed | \(.scores.testLinesRemoved) | \(.gate.thetaTestDeletions | th) | \(fired("test-deletions")) |",
             "| Cognitive complexity increase | \(.scores.cogDelta | sc) | \(.gate.thetaCog | th) | \(fired("cog-delta")) |",
             "| New-function complexity | \(.scores.newFunctionComplexity | sc) | \(.gate.thetaNewFunction | th) | \(fired("new-function-complexity")) |",
             "| Significance | \(.scores.significance | sc) | \(.gate.thetaSignificance | th) | \(fired("significance")) |",
@@ -487,7 +499,8 @@ runs:
               "new-function-complexity": "newFunctionComplexity",
               "significance": "significance", "called-exported-signature": "significance",
               "blast-radius": "blastRadius", "lines-added": "linesAdded",
-              "uncovered-files": "uncoveredFiles", "always-review": "alwaysReview"
+              "uncovered-files": "uncoveredFiles", "always-review": "alwaysReview",
+              "test-deletions": "testLinesRemoved"
             };
             . as $r
             | [ $r.files // [] | .[] | select(.kind == "delete") | .path ] as $gone

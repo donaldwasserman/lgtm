@@ -3,6 +3,7 @@
 package metrics
 
 import (
+	"bytes"
 	"sort"
 	"strings"
 
@@ -146,4 +147,62 @@ func TextChange(base, head string) (added0, removed int) {
 		removed += n
 	}
 	return added0, removed
+}
+
+// TestLinesRemoved counts the non-blank lines that disappear from test
+// files. base and head hold the changed test files on each side, by path.
+// A line counts when it is in a base file and no head test file still has
+// it: lines are compared trimmed, as a multiset across all files, so a test
+// moved or renamed to another file counts for nothing and a rewritten one
+// counts only the lines that actually went away. Contributors are per base
+// file, largest first.
+func TestLinesRemoved(base, head map[string][]byte) (int, []Contributor) {
+	left := map[string]int{}
+	for _, data := range head {
+		for _, l := range testLines(data) {
+			left[l]++
+		}
+	}
+	paths := make([]string, 0, len(base))
+	for p := range base {
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+	total := 0
+	contributors := []Contributor{}
+	for _, p := range paths {
+		n := 0
+		for _, l := range testLines(base[p]) {
+			if left[l] > 0 {
+				left[l]--
+				continue
+			}
+			n++
+		}
+		if n > 0 {
+			_, kept := head[p]
+			contributors = append(contributors, Contributor{File: p, Value: n, Deleted: !kept})
+			total += n
+		}
+	}
+	sort.SliceStable(contributors, func(i, j int) bool { return contributors[i].Value > contributors[j].Value })
+	if len(contributors) > TopN {
+		contributors = contributors[:TopN]
+	}
+	return total, contributors
+}
+
+// testLines splits a file into trimmed non-blank lines. A file with a NUL
+// byte is binary and has none.
+func testLines(data []byte) []string {
+	if bytes.IndexByte(data, 0) >= 0 {
+		return nil
+	}
+	var out []string
+	for _, l := range strings.Split(string(data), "\n") {
+		if l = strings.TrimSpace(l); l != "" {
+			out = append(out, l)
+		}
+	}
+	return out
 }

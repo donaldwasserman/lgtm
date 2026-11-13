@@ -84,7 +84,9 @@ change to existing code reaches.
 _Avoid_: depth, impact depth
 
 **Files touched**:
-The number of files, outside tests, with a substantive change.
+The number of files that existed before the pull request, outside tests, with a
+substantive change. New files and new symbols don't count: new code is judged by
+lines added and new-function complexity.
 _Avoid_: breadth, width
 
 **Modules touched**:
@@ -94,6 +96,12 @@ _Avoid_: breadth, components
 **Lines added**:
 The number of non-blank lines a pull request adds to source files outside tests.
 _Avoid_: size, churn, LOC
+
+**Test lines removed**:
+The number of non-blank lines in test files on the base side that no test file
+on the head side still has, compared as trimmed text across all files. Moving a
+test counts for nothing; deleting or rewriting one counts the lines that went.
+_Avoid_: test churn, test coverage
 
 **Nesting depth**:
 How many syntactic levels a piece of code sits below the top of its file.
@@ -109,8 +117,10 @@ directly or through a bounded number of intermediate callers.
 _Avoid_: impact set
 
 **Blast radius**:
-The affected set minus the changed symbols themselves. It can shrink when a
-pull request changes more, which the affected set cannot.
+The affected set minus the changed symbols themselves, counting only symbols
+whose change is at least medium significance (logic, not a statement or
+constant edit). It can shrink when a pull request changes more, which the
+affected set cannot.
 _Avoid_: reach, ripple
 
 **Significance level**:
