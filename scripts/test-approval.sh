@@ -15,7 +15,7 @@ filter="$(ruby -ryaml -e '
   d = YAML.load_file(ARGV[0])
   step = d["runs"]["steps"].find { |s| s["id"] == "approval" }
   abort "no approval step in action.yml" unless step
-  m = step["run"].match(/states=\$\(jq -r '"'"'(.*?)'"'"' "\$reviews"\)/m)
+  m = step["run"].match(/states=\$\(jq -r --arg head "\$HEAD_SHA" --argjson writers "\$writers" '"'"'(.*?)'"'"' "\$reviews"\)/m)
   abort "could not extract the jq program from action.yml" unless m
   print m[1]
 ' "$root/action.yml")" || exit 1
@@ -23,7 +23,7 @@ filter="$(ruby -ryaml -e '
 # Mirrors the action's interpretation of the reduced per-author states.
 verdict() {
   local approved=false changes_requested=false state
-  for state in $(jq -r "$filter" "$1"); do
+  for state in $(jq -r --arg head head --argjson writers '["alice", "bob"]' "$filter" "$1"); do
     case "$state" in
       APPROVED) approved=true ;;
       CHANGES_REQUESTED) changes_requested=true ;;
@@ -55,5 +55,13 @@ expect approved-then-commented.json 'approved=true changes_requested=false'
 # One outstanding block outranks an approval from someone else.
 expect split-verdict.json          'approved=true changes_requested=true'
 expect pending.json                'approved=false changes_requested=false'
+# An approval vouches for one commit; a later push leaves it stale.
+expect stale-approval.json         'approved=false changes_requested=false'
+expect approved-after-stale.json   'approved=true changes_requested=false'
+# A request for changes stands until withdrawn, whatever was pushed since.
+expect stale-changes-requested.json 'approved=false changes_requested=true'
+# Reviews from people without write access carry no weight, either way.
+expect outsider-approval.json      'approved=false changes_requested=false'
+expect outsider-blocks.json        'approved=true changes_requested=false'
 
 exit "$fail"

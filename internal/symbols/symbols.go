@@ -29,6 +29,7 @@ const (
 	KindMethod Kind = "method" // a function belonging to a type
 	KindType   Kind = "type"   // class, struct, interface, trait, enum, alias
 	KindModule Kind = "module" // Ruby module, Rust mod
+	KindConst  Kind = "const"  // a module-level constant or variable
 )
 
 // Symbol is one named declaration.
@@ -119,6 +120,9 @@ func (s *Symbol) Display() string {
 	return s.Module + " " + name
 }
 
+// Line is the 1-based line the declaration starts on.
+func (s *Symbol) Line() int { return s.Node.Line }
+
 // Callable reports whether the symbol has a body of statements.
 func (s *Symbol) Callable() bool {
 	return (s.Kind == KindFunc || s.Kind == KindMethod) && Body(s.Node) != nil
@@ -151,12 +155,13 @@ type Table struct {
 	// Packages maps each file to the package it belongs to, for breadth:
 	// the Java package, or the file's directory elsewhere.
 	Packages map[string]string
+	byFile   map[string][]*Symbol
 }
 
 // Extract finds the symbols in every parsed file. Files that failed to parse
 // contribute nothing: the gate already forces review for them.
 func Extract(files map[string]*model.File) *Table {
-	t := &Table{Packages: map[string]string{}}
+	t := &Table{Packages: map[string]string{}, byFile: map[string][]*Symbol{}}
 	var paths []string
 	for p := range files {
 		paths = append(paths, p)
@@ -175,6 +180,9 @@ func Extract(files map[string]*model.File) *Table {
 		for _, s := range ex(f) {
 			flatten(s, &t.Symbols)
 		}
+	}
+	for _, s := range t.Symbols {
+		t.byFile[s.File] = append(t.byFile[s.File], s)
 	}
 	return t
 }
@@ -383,11 +391,46 @@ func fieldText(n *model.Node, name string) string {
 	return ""
 }
 
+// residualSkip are top-level nodes that carry no behaviour of their own:
+// package declarations and imports. Comments are skipped separately.
+var residualSkip = map[string]bool{
+	"package_clause": true, "package_declaration": true, "import_declaration": true,
+	"import_statement": true, "import_from_statement": true,
+	"future_import_statement": true, "use_declaration": true,
+}
+
+// Residual is a file's top-level code that belongs to no symbol - a script's
+// statements, a module's side effects - with whitespace normalized. A symbol
+// comparison cannot see a change there, so the caller compares this too. A
+// nil file has none.
+func (t *Table) Residual(f *model.File) string {
+	if f == nil || f.Root == nil {
+		return ""
+	}
+	var parts []string
+	for _, n := range f.Root.Children {
+		if residualSkip[n.Type] || IsComment(n.Type) || t.holdsSymbol(f.Path, n) {
+			continue
+		}
+		parts = append(parts, strings.Join(strings.Fields(n.Text), " "))
+	}
+	return strings.Join(parts, "\n")
+}
+
+func (t *Table) holdsSymbol(file string, n *model.Node) bool {
+	for _, s := range t.byFile[file] {
+		if s.Node.Start >= n.Start && s.Node.End <= n.End {
+			return true
+		}
+	}
+	return false
+}
+
 // Field is exported for the measures built on symbols.
 func Field(n *model.Node, name string) *model.Node { return field(n, name) }
 
-// ModulesTouched counts the distinct packages among the given files.
-func ModulesTouched(files []string, base, head *Table) int {
+// Modules lists the distinct packages among the given files, sorted.
+func Modules(files []string, base, head *Table) []string {
 	seen := map[string]bool{}
 	for _, f := range files {
 		p, ok := head.Packages[f]
@@ -399,5 +442,10 @@ func ModulesTouched(files []string, base, head *Table) int {
 		}
 		seen[p] = true
 	}
-	return len(seen)
+	out := make([]string, 0, len(seen))
+	for p := range seen {
+		out = append(out, p)
+	}
+	sort.Strings(out)
+	return out
 }

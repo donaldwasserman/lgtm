@@ -6,9 +6,10 @@
 
 `lgtm` looks at a pull request and decides whether it needs a human review.
 
-Small, shallow changes pass on their own. Changes that dig deep into existing
-code, or spread across many files, are flagged and stay blocked until someone
-approves them.
+Small, contained changes pass on their own. Changes that make existing code
+harder to follow, break what depends on it, spread across the codebase, or touch
+something `lgtm` can't read are flagged and stay blocked until someone approves
+them.
 
 It runs as a GitHub Action (the usual way), a Docker image, or a command-line
 tool.
@@ -21,28 +22,33 @@ review" or not. You set the thresholds; every one can be switched `off`.
 
 | Measure | Plain meaning | Default threshold |
 | --- | --- | --- |
-| **Edit depth** | How deep the change reaches into code that already existed | 7 |
-| **Files touched** | How many files changed | 6, if total depth is above 1 |
-| **Modules touched** | How many packages changed | off |
+| **Files touched** | How many files outside tests have a change that could alter behaviour | 15 |
+| **Modules touched** | How many packages those files belong to | 4 |
+| **Lines added** | How many non-blank lines were added to source files outside tests | 1000 |
+| **Uncovered files** | How many changed files `lgtm` can't read (another language, SQL, YAML) and you haven't told it to ignore | 1 |
 | **Complexity increase** | The most any existing function got harder to read ([cognitive complexity](https://www.sonarsource.com/docs/CognitiveComplexity.pdf)) | 5 |
 | **New-function complexity** | How hard to read the most complex new function is | 25 |
-| **Significance** | The riskiest kind of change to existing code: none, low (statements), medium (conditions, error handling), high (an exported signature), crucial (an export removed, a superclass changed) | crucial |
-| **Blast radius** | How many symbols call what changed, up to three calls away | 50 |
+| **Significance** | The riskiest kind of change to existing code: none, low (statements, constant values), medium (conditions, error handling), high (an exported signature), crucial (an export removed, a superclass changed) | crucial |
+| **Blast radius** | How many symbols call what changed, up to three calls away | 30 |
+| **Edit depth** | How deep in the syntax tree the deepest change sits. It depends on each language's grammar, so it's reported but not used by default | off |
 
 While the significance threshold is on, an exported signature change to
 something that has callers also requires review.
 
-Some rules can't be switched off:
+Two rules ignore the thresholds:
 
 - **A file it can't parse always requires review.** No measurement means no free pass.
-- **Code it fails to analyze always requires review**, for the same reason.
-- **Trusted authors skip every threshold** (off by default), but never the two
-  rules above. You choose who counts as trusted — see
-  [Trust modes](docs/action.md#trust-modes).
+- **A change to an always-review path requires review.** By default that's your
+  GitHub workflows and `.lgtm.yml`; add your own.
 
-New code is judged only by new-function complexity (and file and module
-counts): a narrow addition of readable code passes. Deleting a private
-function nothing uses doesn't count against you either.
+Comments, formatting, imports, renamed locals and code moved within a module
+don't count as touching a file. Neither does deleting a private function
+nothing uses. New code is judged by new-function complexity and by the file,
+module and line counts: a narrow addition of readable code passes.
+
+Defaults and path lists can be changed in a `.lgtm.yml`, including what `lgtm`
+skips. See **[docs/configuration.md](docs/configuration.md)** for the options
+and ready-made recipes.
 
 The gate is written down in a formal model and the code is tested against
 it. See [docs/development.md](docs/development.md) for the details, and
@@ -94,8 +100,8 @@ The action posts a check called **`LGTM / review-gate`** on every pull request:
 To actually block merges, make that check required in your branch protection
 settings — but only after you've seen it work on a real pull request.
 
-Full reference (all options, what each check result means, trust modes,
-troubleshooting): **[docs/action.md](docs/action.md)**.
+Full reference (all options, what each check result means, troubleshooting):
+**[docs/action.md](docs/action.md)**.
 
 ## Command line and Docker
 
@@ -120,7 +126,7 @@ docker run --rm --network none -v "$PWD:/repo:ro" \
 
 # Prebuilt binary (Linux and macOS): pick lgtm_<version>_<os>_<arch>.tar.gz
 # from https://github.com/donaldwasserman/lgtm/releases, e.g.
-curl -fsSL https://github.com/donaldwasserman/lgtm/releases/download/v0.0.4/lgtm_0.0.4_linux_amd64.tar.gz | tar -xz lgtm
+curl -fsSL https://github.com/donaldwasserman/lgtm/releases/download/v0.0.5/lgtm_0.0.5_linux_amd64.tar.gz | tar -xz lgtm
 
 # From source (needs Go 1.25+ and a C compiler)
 go install github.com/donaldwasserman/lgtm/cmd/lgtm@latest
@@ -137,16 +143,18 @@ Git mode needs `git` installed; the Docker image includes it.
 | `--head-ref` | `HEAD` | The change itself |
 | `--base` | | Folder with the code before the change (use with `--head`) |
 | `--head` | | Folder with the code after the change |
-| `--theta-depth` | `7` | Edit depth that requires review |
-| `--theta-breadth` | `6` | Files touched that require review (with total depth above `--epsilon-trivial`) |
-| `--epsilon-trivial` | `1` | Total depth at or below which a wide change is too small to matter |
-| `--theta-modules` | `off` | Modules touched that require review |
+| `--config` | `.lgtm.yml` in the base tree | Configuration file |
+| `--preset` | `balanced` | Gate to start from: `balanced` or `strict` |
+| `--theta-breadth` | `15` | Files touched that require review |
+| `--theta-modules` | `4` | Modules touched that require review |
+| `--theta-lines` | `1000` | Lines added that require review |
+| `--theta-uncovered` | `1` | Uncovered files that require review |
 | `--theta-cog` | `5` | Increase in one existing function's cognitive complexity that requires review |
 | `--theta-new-function` | `25` | Cognitive complexity of one new function that requires review |
 | `--theta-significance` | `crucial` | Significance level (`low`, `medium`, `high`, `crucial`) that requires review |
-| `--theta-blast` | `50` | Blast radius that requires review |
-| `--exclude` | | Glob of paths to leave out of the scan; repeat for several (see below) |
-| `--trusted` | `false` | Treat the author as trusted (skips review). You decide who that is |
+| `--theta-blast` | `30` | Blast radius that requires review |
+| `--theta-depth` | `off` | Edit depth that requires review |
+| `--exclude` | | Glob of paths to leave out of the scan; repeat for several. `!entry` removes a built-in entry |
 | `--output` | | Also write the report to this file |
 | `--exit-zero` | `false` | Exit `0` whatever the verdict; only errors exit non-zero |
 | `--version` | | Print the version |
@@ -157,15 +165,10 @@ Git mode needs `git` installed; the Docker image includes it.
 branch that can't be found). With `--exit-zero`, read `verdict` from the
 report instead.
 
-`--exclude` patterns match paths relative to the repository root. A pattern
-without a slash (`*.pb.go`, `testdata`) matches at any depth; one with a slash
-(`docs/gen`, `src/**/*.min.js`) is anchored at the root. `**` spans any number
-of directories, and a pattern that matches a directory excludes everything
-under it. Excluded files are neither parsed nor counted, whichever side of the
-diff they are on. `node_modules`, `vendor`, `dist`, `build` and similar are
-always skipped. Excluded files are still searched as text when deciding
-whether a deleted private symbol is unreferenced, so excluding tests or
-generated code cannot hide a use.
+`--exclude` patterns work as described in
+[docs/configuration.md](docs/configuration.md#path-lists). `node_modules`,
+`vendor`, `dist`, `build` and similar are excluded by default, and
+`--exclude '!build'` brings one back.
 
 Every `--theta-*` flag takes a number or `off`. `0` is rejected: it would
 flag every change.
@@ -177,41 +180,44 @@ Here `lib.Parse` gained a parameter, and `app.Run` calls it (abridged):
 ```console
 $ lgtm --base before/ --head after/
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "verdict": "review-required",
   "requiresReview": true,
   "reasons": ["called-exported-signature"],
-  "scores": { "editDepth": 3, "newDepth": 4, "depthTotal": 4, "breadthFiles": 1,
-              "breadthModules": 1, "cogDelta": 0, "newFunctionComplexity": 0,
+  "scores": { "editDepth": 3, "newDepth": 4, "breadthFiles": 1, "breadthModules": 1,
+              "linesAdded": 1, "uncoveredFiles": 0, "cogDelta": 0, "newFunctionComplexity": 0,
               "significance": "high", "calledSignificance": "high", "blastRadius": 1 },
-  "facts": { "trusted": false, "unparsed": false, "analysisFailed": false },
-  "gate": { "thetaDepth": 7, "thetaBreadth": 6, "epsilonTrivial": 1, "thetaModules": null,
-            "thetaCog": 5, "thetaNewFunction": 25, "thetaSignificance": "crucial", "thetaBlast": 50 },
+  "facts": { "unparsed": false, "alwaysReview": false },
+  "gate": { "thetaDepth": null, "thetaBreadth": 15, "thetaModules": 4, "thetaLines": 1000,
+            "thetaUncovered": 1, "thetaCog": 5, "thetaNewFunction": 25,
+            "thetaSignificance": "crucial", "thetaBlast": 30 },
+  "overrides": [],
   "contributors": {
-    "significance": [ { "symbol": "lib Parse", "file": "lib/lib.go", "level": "high", "parts": ["signature"] } ],
-    "blastRadius": [ { "symbol": "lib Parse", "file": "lib/lib.go", "value": 1 } ]
+    "significance": [ { "symbol": "lib Parse", "file": "lib/lib.go", "line": 3, "level": "high", "parts": ["signature"] } ],
+    "blastRadius": [ { "symbol": "lib Parse", "file": "lib/lib.go", "line": 3, "value": 1 } ]
   },
-  "files": [ { "path": "lib/lib.go", "kind": "modify" } ]
+  "files": [ { "path": "lib/lib.go", "kind": "modify", "coverage": "analyzed" } ]
 }
 ```
 
 | Field | Meaning |
 | --- | --- |
-| `schemaVersion` | `2`. Goes up only if a field is renamed, removed, or changes meaning |
+| `schemaVersion` | `3`. Goes up only if a field is renamed, removed, or changes meaning |
 | `verdict` | `"review-required"` or `"no-review"` |
 | `requiresReview` | Same, as `true`/`false` |
-| `reasons` | Every rule that required review (`edit-depth`, `breadth-files`, `breadth-modules`, `cog-delta`, `new-function-complexity`, `significance`, `called-exported-signature`, `blast-radius`, `unparsed`, `analysis-failed`) |
+| `reasons` | Every rule that required review (`unparsed`, `always-review`, `edit-depth`, `breadth-files`, `breadth-modules`, `lines-added`, `uncovered-files`, `cog-delta`, `new-function-complexity`, `significance`, `called-exported-signature`, `blast-radius`) |
 | `scores` | One score per measure. `null` means the measure isn't available for the change's languages, which never requires review |
-| `facts` | Inputs to the rules that can't be switched off |
-| `gate` | The thresholds used. `null` means switched off |
-| `contributors` | The functions and symbols behind each score, highest first |
+| `facts` | Inputs to the rules that ignore thresholds |
+| `gate` | The thresholds used, after any overrides. `null` means switched off |
+| `overrides` | The path overrides that applied |
+| `contributors` | What's behind each score, highest first: the symbol, file, and line where they apply. `deleted` marks a place that no longer exists |
 | `parseErrors` | Files that couldn't be parsed. Only present if there are any; forces review |
-| `files` | Files that changed, and how (`insert`, `delete`, `modify`) |
+| `files` | Files that changed, how (`insert`, `delete`, `modify`), and `coverage` (`analyzed`, `uncovered`, `ignored`, `style`) |
 
 ### Other CI systems
 
-`lgtm` only looks at code. Approvals, trusted authors, and posting results are
-up to the caller. For example:
+`lgtm` only looks at code. Approvals and posting results are up to the caller.
+For example:
 
 ```bash
 git fetch --no-tags origin main
@@ -236,11 +242,14 @@ jq -r .verdict out/lgtm.json
 | Java | `.java` |
 | Rust | `.rs` |
 
-Other files are ignored, as are `.git`, `node_modules`, `vendor`, `target`,
-`.venv`, `venv`, and `__pycache__` folders.
+Any other changed file counts as uncovered unless it's on the ignore list, which
+by default covers documentation, images and licenses. Stylesheets (`.css`,
+`.scss`, `.sass`, `.less`) are never uncovered; their added lines and touched
+files still count (see [configuration](docs/configuration.md#stylesheets)).
 
 ## More
 
+- [docs/configuration.md](docs/configuration.md) — `.lgtm.yml`, presets and recipes
 - [docs/action.md](docs/action.md) — GitHub Action reference
 - [docs/development.md](docs/development.md) — building, testing, and the formal model
 - [docs/releasing.md](docs/releasing.md) — versions and how to publish one

@@ -2,34 +2,27 @@ package main
 
 import (
 	"flag"
-	"fmt"
-	"strconv"
 	"strings"
 
 	"github.com/donaldwasserman/lgtm/eval"
 )
 
-// thresholdFlag is a gate threshold given on the command line: a number, or
-// "off" to switch the threshold off. It writes through to the gate field.
-type thresholdFlag struct{ p **int }
-
-func (f thresholdFlag) String() string {
-	if f.p == nil || *f.p == nil {
-		return "off"
-	}
-	return strconv.Itoa(**f.p)
+// thresholdFlag records a threshold given on the command line: a number, a
+// significance level, or "off". Set rejects a value of the wrong shape; the
+// gate as a whole is validated once the configuration is resolved.
+type thresholdFlag struct {
+	name   string
+	pinned map[string]string
 }
 
+func (f thresholdFlag) String() string { return f.pinned[f.name] }
+
 func (f thresholdFlag) Set(s string) error {
-	if s == "off" {
-		*f.p = nil
-		return nil
+	var g eval.Gate
+	if err := g.Set(f.name, s); err != nil {
+		return err
 	}
-	v, err := strconv.Atoi(s)
-	if err != nil {
-		return fmt.Errorf("want a number or \"off\", got %q", s)
-	}
-	*f.p = &v
+	f.pinned[f.name] = s
 	return nil
 }
 
@@ -43,45 +36,23 @@ func (f *stringsFlag) Set(s string) error {
 	return nil
 }
 
-// levelFlag is a significance threshold: a level name, or "off".
-type levelFlag struct{ p **eval.Level }
-
-func (f levelFlag) String() string {
-	if f.p == nil || *f.p == nil {
-		return "off"
-	}
-	return (**f.p).String()
+// thresholdHelp describes each threshold, keyed by its eval.Gate name.
+var thresholdHelp = map[string]string{
+	"depth":        "edit depth",
+	"breadth":      "non-test files with a substantive change",
+	"modules":      "packages those files belong to",
+	"lines":        "non-blank lines added to non-test source files",
+	"uncovered":    "changed files no measure can look at",
+	"cog":          "increase in one existing function's cognitive complexity",
+	"new-function": "cognitive complexity of one new function",
+	"significance": "significance level (low, medium, high, crucial)",
+	"blast":        "blast radius (callers within 3 hops)",
 }
 
-func (f levelFlag) Set(s string) error {
-	if s == "off" {
-		*f.p = nil
-		return nil
+// gateFlags registers one --theta-* flag per threshold.
+func gateFlags(fs *flag.FlagSet, pinned map[string]string) {
+	for _, name := range eval.ThresholdNames {
+		fs.Var(thresholdFlag{name, pinned}, "theta-"+name,
+			thresholdHelp[name]+` at which review is required, or "off" (default: from the preset)`)
 	}
-	l, err := eval.ParseLevel(s)
-	if err != nil {
-		return err
-	}
-	*f.p = &l
-	return nil
-}
-
-// gateFlags registers one flag per gate threshold, defaulting to g's values.
-func gateFlags(fs *flag.FlagSet, g *eval.Gate) {
-	fs.Var(thresholdFlag{&g.ThetaDepth}, "theta-depth",
-		`edit depth at which review is required, or "off"`)
-	fs.Var(thresholdFlag{&g.ThetaBreadth}, "theta-breadth",
-		`files touched at which review is required (with depth above epsilon-trivial), or "off"`)
-	fs.IntVar(&g.EpsilonTrivial, "epsilon-trivial", g.EpsilonTrivial,
-		"total depth at or below which a wide change counts as trivial")
-	fs.Var(thresholdFlag{&g.ThetaModules}, "theta-modules",
-		`modules touched at which review is required, or "off"`)
-	fs.Var(thresholdFlag{&g.ThetaCog}, "theta-cog",
-		`increase in one existing function's cognitive complexity at which review is required, or "off"`)
-	fs.Var(thresholdFlag{&g.ThetaNewFunction}, "theta-new-function",
-		`cognitive complexity of one new function at which review is required, or "off"`)
-	fs.Var(levelFlag{&g.ThetaSignificance}, "theta-significance",
-		`significance level (low, medium, high, crucial) at which review is required, or "off"`)
-	fs.Var(thresholdFlag{&g.ThetaBlast}, "theta-blast",
-		`blast radius (callers within 3 hops) at which review is required, or "off"`)
 }

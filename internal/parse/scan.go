@@ -3,6 +3,7 @@ package parse
 import (
 	"context"
 	"crypto/sha256"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -15,7 +16,8 @@ import (
 
 // Scan walks a directory and parses every supported source file into a
 // model.File keyed by its relative path. Unsupported files are skipped and
-// unparseable files are recorded with an Error.
+// unparseable files are recorded with an Error. What to leave out is the
+// caller's to say: only ScanPair takes a list.
 func Scan(ctx context.Context, dir string) (map[string]*model.File, error) {
 	files, _, err := scan(ctx, dir, nil, nil)
 	return files, err
@@ -26,7 +28,7 @@ func Scan(ctx context.Context, dir string) (map[string]*model.File, error) {
 // the unchanged part of a repository costs one parse instead of two. The
 // result is the same as calling Scan on each tree. Paths matched by exclude
 // (which may be nil) are left out of both.
-func ScanPair(ctx context.Context, base, head string, exclude *Exclude) (baseFiles, headFiles map[string]*model.File, err error) {
+func ScanPair(ctx context.Context, base, head string, exclude *Globs) (baseFiles, headFiles map[string]*model.File, err error) {
 	baseFiles, sums, err := scan(ctx, base, nil, exclude)
 	if err != nil {
 		return nil, nil, err
@@ -46,7 +48,7 @@ type reuse struct {
 
 // scan parses dir, leaving out paths exclude matches. It also returns a digest of each parsed file's source, and
 // when prev is set, skips parsing any file whose digest matches prev's.
-func scan(ctx context.Context, dir string, prev *reuse, exclude *Exclude) (map[string]*model.File, map[string][sha256.Size]byte, error) {
+func scan(ctx context.Context, dir string, prev *reuse, exclude *Globs) (map[string]*model.File, map[string][sha256.Size]byte, error) {
 	files := map[string]*model.File{}
 	sums := map[string][sha256.Size]byte{}
 	// One parser per language, reused across files and closed on the way out;
@@ -66,7 +68,7 @@ func scan(ctx context.Context, dir string, prev *reuse, exclude *Exclude) (map[s
 			return err
 		}
 		if d.IsDir() {
-			if SkipDir(path) || (rel != "." && exclude.Match(filepath.ToSlash(rel))) {
+			if rel != "." && exclude.Match(filepath.ToSlash(rel)) {
 				return filepath.SkipDir
 			}
 			return nil
@@ -121,17 +123,6 @@ func parseFile(ctx context.Context, p *sitter.Parser, spec *Spec, rel string, sr
 	return f
 }
 
-// SkipDir reports whether a directory should be excluded from scanning.
-func SkipDir(path string) bool {
-	base := filepath.Base(path)
-	switch base {
-	case ".git", "node_modules", "vendor", ".venv", "venv", "__pycache__",
-		"dist", "build", "target", ".tox", ".idea", ".vscode":
-		return true
-	}
-	return false
-}
-
 // build converts a Tree-sitter node into the language-agnostic named-node
 // model, recursing only into named children and extracting a definition name
 // where the node type declares one.
@@ -163,6 +154,7 @@ func (s *Spec) build(n *sitter.Node, src []byte, depth, index int) *model.Node {
 		Start:  start,
 		End:    end,
 		Index:  index,
+		Line:   int(n.StartPoint().Row) + 1,
 		Nest:   depth,
 	}
 	// Walk all children rather than only the named ones: the field a child
@@ -419,4 +411,123 @@ func tarjan(adj [][]int) []int {
 		}
 	}
 	return comp
+}
+
+// Unscanned is a changed file that no measure looks at, because it is not in
+// a supported language.
+type Unscanned struct {
+	Path string
+	Kind model.ChangeKind
+}
+
+// ChangedUnscanned compares everything outside the supported languages and
+// lists what differs between the two trees, sorted by path. Paths matched by
+// exclude are left out, as they are from the scan.
+func ChangedUnscanned(base, head string, exclude *Globs) ([]Unscanned, error) {
+	b, err := listUnscanned(base, exclude)
+	if err != nil {
+		return nil, err
+	}
+	h, err := listUnscanned(head, exclude)
+	if err != nil {
+		return nil, err
+	}
+	var out []Unscanned
+	for rel, hf := range h {
+		bf, ok := b[rel]
+		if !ok {
+			out = append(out, Unscanned{rel, model.KindInsert})
+			continue
+		}
+		same, err := sameFile(bf, hf)
+		if err != nil {
+			return nil, err
+		}
+		if !same {
+			out = append(out, Unscanned{rel, model.KindModify})
+		}
+	}
+	for rel := range b {
+		if _, ok := h[rel]; !ok {
+			out = append(out, Unscanned{rel, model.KindDelete})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
+	return out, nil
+}
+
+// unscannedFile is one file outside the supported languages.
+type unscannedFile struct {
+	path string
+	info fs.FileInfo
+}
+
+func listUnscanned(dir string, exclude *Globs) (map[string]unscannedFile, error) {
+	out := map[string]unscannedFile{}
+	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(dir, path)
+		if err != nil {
+			return err
+		}
+		slashed := filepath.ToSlash(rel)
+		if rel != "." && exclude.Match(slashed) {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if d.IsDir() || LanguageFor(path) != nil {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		if info.Mode().IsRegular() || info.Mode()&fs.ModeSymlink != 0 {
+			out[slashed] = unscannedFile{path, info}
+		}
+		return nil
+	})
+	return out, err
+}
+
+func sameFile(a, b unscannedFile) (bool, error) {
+	if a.info.Mode().Type() != b.info.Mode().Type() {
+		return false, nil
+	}
+	if a.info.Mode()&fs.ModeSymlink != 0 {
+		ta, err := os.Readlink(a.path)
+		if err != nil {
+			return false, err
+		}
+		tb, err := os.Readlink(b.path)
+		return ta == tb, err
+	}
+	if a.info.Size() != b.info.Size() {
+		return false, nil
+	}
+	sa, err := digest(a.path)
+	if err != nil {
+		return false, err
+	}
+	sb, err := digest(b.path)
+	return sa == sb, err
+}
+
+func digest(path string) ([sha256.Size]byte, error) {
+	var sum [sha256.Size]byte
+	f, err := os.Open(path)
+	if err != nil {
+		return sum, err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return sum, err
+	}
+	copy(sum[:], h.Sum(nil))
+	return sum, nil
 }

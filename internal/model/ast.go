@@ -16,6 +16,7 @@ type Node struct {
 	Start    uint32  `json:"startByte"`          // byte offset of node start
 	End      uint32  `json:"endByte"`            // byte offset of node end
 	Index    int     `json:"index"`              // position among the parent's retained children
+	Line     int     `json:"line"`               // 1-based line the node starts on
 	Nest     int     `json:"nest"`               // raw AST nesting depth (root = 0)
 	Call     int     `json:"call,omitempty"`     // max intra-file call depth through this node
 	Depth    int     `json:"depth"`              // Nest + Call (computed)

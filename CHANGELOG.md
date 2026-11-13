@@ -3,6 +3,41 @@
 Each version's section becomes its GitHub release notes. Versioning rules are
 in [docs/releasing.md](docs/releasing.md#version-numbers).
 
+## Unreleased
+
+- Stylesheets (`.css`, `.scss`, `.sass`, `.less`) no longer count as uncovered files.
+  A new `style-paths` list counts their added lines and touched files instead.
+  The report's file `coverage` gains `style`.
+
+## 0.0.5
+
+Changes how the gate decides, and the report format (`schemaVersion` 3).
+
+- Removed the trusted-author exemption: `--trusted` and the action's
+  `trust-mode`, `trust-count`, `trust-percent` and `author` inputs. Deciding who
+  may skip review is a separate problem.
+- Edit depth is off in the default gate; it is still reported. New default gate:
+  files 15, modules 4, lines added 1000, uncovered files 1, complexity increase
+  5, new-function complexity 25, significance `crucial`, blast radius 30.
+- `.lgtm.yml`, read from the base commit so a pull request cannot loosen its own
+  gate. It sets a preset (`balanced` or `strict`), thresholds, path lists and
+  path overrides that tighten the gate.
+- The directories lgtm skips (`node_modules`, `build`, ...) are now a default
+  list. Add to it, or remove an entry with `!build`.
+- New score, lines added. New score, uncovered files: a changed file lgtm cannot
+  read (another language, SQL, YAML, ...) now requires review unless ignored.
+- New always-review paths; by default `.github/workflows` and `.lgtm.yml`.
+- Files and modules touched count only substantive changes outside tests.
+  `--epsilon-trivial` is gone, and `scores.depthTotal` with it.
+- Module-level constants and variables are now symbols, so a changed value
+  counts in significance (low) and blast radius.
+- An approval counts only on the latest commit and from someone with write
+  access. Reviews from anyone else no longer block either.
+- Every score names what is behind it, with file and line, and the check
+  annotates those places for each rule that fired.
+- Removed `facts.analysisFailed`, which nothing ever set. A crash already fails
+  the check.
+
 ## 0.0.4
 
 - `--exclude` (action input `exclude`) leaves paths matching a glob out of

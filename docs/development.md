@@ -73,15 +73,13 @@ Model output goes to `alloy/output/` and `alloy/runtime/` (both ignored by git).
 Gate (`gate_properties.als`), for every configuration:
 
 - An unparsed file always requires review (fixed rule).
-- Code lgtm fails to analyze always requires review (fixed rule).
-- A trusted author skips every threshold, but never a fixed rule.
+- A change to an always-review path always requires review (fixed rule).
 - Raising any score never turns review off. An unavailable score counts as
   the lowest value.
 - Switching a threshold off never turns review on.
 - With every threshold off, only the fixed rules remain.
-- With the new thresholds off, the gate is exactly the original depth and
-  breadth rule.
-- With every new score unavailable, the gate falls back to that same rule.
+- With every symbol-based score unavailable, the gate still applies the
+  measures that need no symbols: depth, files, lines and uncovered files.
 - Narrow pure additions with readable new functions pass.
 
 Measures (`blast_radius.als`, `significance.als`):
@@ -107,21 +105,40 @@ Check results (`check_properties.als`):
 - Approving is enough to turn it green — no new push needed.
 - Comment-only reviews change nothing.
 - Only each reviewer's latest verdict counts.
-- An unparsed file, or code lgtm failed to analyze, can't go green without
-  approval.
-- A trusted author's measured change stays green.
+- An unparsed file, or a change to an always-review path, can't go green
+  without approval.
+- An approval left before the latest push doesn't clear the check.
+- An approval from someone without write access doesn't either.
+
+## Tuning the thresholds
+
+The defaults are informed guesses. `scripts/replay.sh` runs a built `lgtm` over
+a checkout's recent first-parent commits and reports each measure's distribution
+and how often each rule would fire:
+
+```bash
+make build
+scripts/replay.sh /path/to/repo 200
+```
+
+Replay several repositories, in several languages, before changing a default.
 
 ## Code layout
 
 ```
-cmd/lgtm/          command-line entry point, including git mode
-cmd/genalloy/      turns Alloy examples into eval/evaluator_alloy_test.go
-eval/              the gate (mirrors alloy/gate.als)
-internal/parse/    reads source files with Tree-sitter; one entry per language
-internal/diff/     lines up before/after code and classifies each change
-internal/metrics/  turns the comparison into the scores the gate reads
-internal/model/    shared types
-alloy/             formal models
-scripts/           tests for action.yml, and release helpers
-Dockerfile         build, test and runtime stages of the image
+cmd/lgtm/              command-line entry point, including git mode
+cmd/genalloy/          turns Alloy examples into eval/evaluator_alloy_test.go
+eval/                  the gate and presets (mirrors alloy/gate.als)
+internal/config/       reads .lgtm.yml and the built-in path lists
+internal/parse/        reads source files with Tree-sitter; one entry per language
+internal/diff/         lines up before/after code and classifies each change
+internal/metrics/      depth and lines added, from that comparison
+internal/symbols/      finds symbols and pairs them across the change
+internal/cognitive/    cognitive complexity
+internal/significance/ how strongly a change can affect other code
+internal/blast/        the reference graph, blast radius, deletion exemption
+internal/model/        shared types
+alloy/                 formal models
+scripts/               tests for action.yml, release helpers, corpus replay
+Dockerfile             build, test and runtime stages of the image
 ```

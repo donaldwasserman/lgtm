@@ -27,6 +27,7 @@ run scenario_gate_requiredApproved {
     g.outcome = Required
     g.isPullRequest = TRUE and g.checkPublishable = TRUE
     g.reviews = Review
+    Review.onHead = TRUE and Reviewer.canWrite = TRUE
     Review.verdict = APPROVED
     gateState[g] = SApproved
     conclusion[g] = Success
@@ -50,6 +51,7 @@ run scenario_gate_changesRequested {
     g.outcome = Required
     g.isPullRequest = TRUE and g.checkPublishable = TRUE
     g.reviews = Review
+    Review.onHead = TRUE and Reviewer.canWrite = TRUE
     Review.verdict = CHANGES_REQUESTED
     gateState[g] = SChangesRequested
     conclusion[g] = Failure
@@ -93,6 +95,7 @@ run scenario_gate_blockOutranksApproval {
     g.outcome = Required
     g.isPullRequest = TRUE and g.checkPublishable = TRUE
     g.reviews = Review
+    Review.onHead = TRUE and Reviewer.canWrite = TRUE
     some a, b: Review | {
       a != b
       a.verdict = APPROVED
@@ -110,6 +113,7 @@ run scenario_gate_commentAfterApproval {
     g.outcome = Required
     g.isPullRequest = TRUE and g.checkPublishable = TRUE
     g.reviews = Review
+    Review.onHead = TRUE and Reviewer.canWrite = TRUE
     some a, c: Review | {
       a.verdict = APPROVED
       c.verdict = COMMENTED
@@ -126,6 +130,7 @@ run scenario_gate_approvalThenChanges {
     g.outcome = Required
     g.isPullRequest = TRUE and g.checkPublishable = TRUE
     g.reviews = Review
+    Review.onHead = TRUE and Reviewer.canWrite = TRUE
     some a, b: Review | {
       a.verdict = APPROVED
       b.verdict = CHANGES_REQUESTED
@@ -142,6 +147,7 @@ run scenario_gate_changesThenApproval {
     g.outcome = Required
     g.isPullRequest = TRUE and g.checkPublishable = TRUE
     g.reviews = Review
+    Review.onHead = TRUE and Reviewer.canWrite = TRUE
     some a, b: Review | {
       b.verdict = CHANGES_REQUESTED
       a.verdict = APPROVED
@@ -157,6 +163,7 @@ run scenario_gate_dismissedApproval {
     g.outcome = Required
     g.isPullRequest = TRUE and g.checkPublishable = TRUE
     g.reviews = Review
+    Review.onHead = TRUE and Reviewer.canWrite = TRUE
     Review.verdict = DISMISSED
     gateState[g] = SAwaiting
   }
@@ -169,8 +176,44 @@ run scenario_gate_failedOutranksApproval {
     g.outcome = Failed
     g.isPullRequest = TRUE and g.checkPublishable = TRUE
     g.reviews = Review
+    Review.onHead = TRUE and Reviewer.canWrite = TRUE
     Review.verdict = APPROVED
     gateState[g] = SFailed
     conclusion[g] = Failure
+  }
+} for 3 but exactly 1 Evaluation, exactly 1 Review, exactly 1 Reviewer
+
+-- An approval from before the latest push: the gate waits again.
+run scenario_gate_staleApproval {
+  all g: Evaluation | {
+    g.outcome = Required
+    g.isPullRequest = TRUE and g.checkPublishable = TRUE
+    g.reviews = Review
+    Review.verdict = APPROVED and Review.onHead = FALSE and Reviewer.canWrite = TRUE
+    gateState[g] = SAwaiting
+    conclusion[g] = Failure
+  }
+} for 3 but exactly 1 Evaluation, exactly 1 Review, exactly 1 Reviewer
+
+-- An approval from someone without write access counts for nothing.
+run scenario_gate_outsiderApproval {
+  all g: Evaluation | {
+    g.outcome = Required
+    g.isPullRequest = TRUE and g.checkPublishable = TRUE
+    g.reviews = Review
+    Review.verdict = APPROVED and Review.onHead = TRUE and Reviewer.canWrite = FALSE
+    gateState[g] = SAwaiting
+    conclusion[g] = Failure
+  }
+} for 3 but exactly 1 Evaluation, exactly 1 Review, exactly 1 Reviewer
+
+-- A request for changes on an older commit still stands.
+run scenario_gate_staleChangesRequestedStillBlocks {
+  all g: Evaluation | {
+    g.outcome = Required
+    g.isPullRequest = TRUE and g.checkPublishable = TRUE
+    g.reviews = Review
+    Review.verdict = CHANGES_REQUESTED and Review.onHead = FALSE and Reviewer.canWrite = TRUE
+    gateState[g] = SChangesRequested
   }
 } for 3 but exactly 1 Evaluation, exactly 1 Review, exactly 1 Reviewer

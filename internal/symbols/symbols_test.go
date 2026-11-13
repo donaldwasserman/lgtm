@@ -323,19 +323,48 @@ func TestCompare(t *testing.T) {
 	}
 }
 
-func TestModulesTouched(t *testing.T) {
+func TestModules(t *testing.T) {
 	tab := scan(t, map[string]string{
 		"a/x.go": "package a\n", "a/y.go": "package a\n", "b/z.go": "package b\n",
 		"src/A.java": "package com.ex;\nclass A {}\n", "other/B.java": "package com.ex;\nclass B {}\n",
 	})
-	if got := ModulesTouched([]string{"a/x.go", "a/y.go"}, tab, tab); got != 1 {
+	if got := len(Modules([]string{"a/x.go", "a/y.go"}, tab, tab)); got != 1 {
 		t.Errorf("one Go package: got %d", got)
 	}
-	if got := ModulesTouched([]string{"a/x.go", "b/z.go"}, tab, tab); got != 2 {
+	if got := len(Modules([]string{"a/x.go", "b/z.go"}, tab, tab)); got != 2 {
 		t.Errorf("two Go packages: got %d", got)
 	}
 	// Java modules are packages, wherever the files sit.
-	if got := ModulesTouched([]string{"src/A.java", "other/B.java"}, tab, tab); got != 1 {
+	if got := len(Modules([]string{"src/A.java", "other/B.java"}, tab, tab)); got != 1 {
 		t.Errorf("one Java package in two directories: got %d", got)
+	}
+}
+
+func TestConstantsAreSymbols(t *testing.T) {
+	cases := []struct {
+		path, src string
+		want      map[string]bool // name -> exported
+	}{
+		{"a.go", "package a\n\nconst A = 1\nconst (\n\tb = 2\n\tC, D = 3, 4\n)\nvar (\n\tE = 5\n)\nvar _ = 6\n",
+			map[string]bool{"A": true, "b": false, "C": true, "D": true, "E": true}},
+		{"a.py", "A = 1\n_b: int = 2\nx.y = 3\n", map[string]bool{"A": true, "_b": false}},
+		{"a.js", "export const A = 1;\nconst b = 2;\nconst {c} = d;\nlet e;\n", map[string]bool{"A": true, "b": false}},
+		{"a.rs", "pub const A: i32 = 1;\nstatic B: i32 = 2;\n", map[string]bool{"A": true, "B": false}},
+		{"a.rb", "A = 1\nb = 2\n", map[string]bool{"A": true}},
+		{"A.java", "public class A {\n  public static final int B = 1;\n  private static final int C = 2;\n  public int d = 3;\n}\n",
+			map[string]bool{"B": true, "C": false}},
+	}
+	for _, c := range cases {
+		t.Run(c.path, func(t *testing.T) {
+			got := map[string]bool{}
+			for _, s := range scan(t, map[string]string{c.path: c.src}).Symbols {
+				if s.Kind == KindConst {
+					got[s.Name] = s.Exported
+				}
+			}
+			if !reflect.DeepEqual(got, c.want) {
+				t.Errorf("constants = %v, want %v", got, c.want)
+			}
+		})
 	}
 }

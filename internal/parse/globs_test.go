@@ -2,7 +2,7 @@ package parse
 
 import "testing"
 
-func TestExcludeMatch(t *testing.T) {
+func TestGlobsMatch(t *testing.T) {
 	cases := []struct {
 		pattern, path string
 		want          bool
@@ -22,7 +22,7 @@ func TestExcludeMatch(t *testing.T) {
 		{"**/gen/**", "a/gen/b/c.go", true},
 	}
 	for _, c := range cases {
-		e, err := NewExclude([]string{c.pattern})
+		e, err := NewGlobs([]string{c.pattern})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -32,15 +32,15 @@ func TestExcludeMatch(t *testing.T) {
 	}
 }
 
-func TestExcludeBadPattern(t *testing.T) {
-	if _, err := NewExclude([]string{"[a"}); err == nil {
+func TestGlobsBadPattern(t *testing.T) {
+	if _, err := NewGlobs([]string{"[a"}); err == nil {
 		t.Error("want error for malformed glob")
 	}
 }
 
-func TestNilExclude(t *testing.T) {
-	var e *Exclude
+func TestNilGlobs(t *testing.T) {
+	var e *Globs
 	if e.Match("a.go") {
-		t.Error("nil Exclude matched")
+		t.Error("nil Globs matched")
 	}
 }

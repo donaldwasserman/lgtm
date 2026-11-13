@@ -18,14 +18,15 @@ import (
 // the symbol somewhere (ExemptionSoundUnderMissedCalls).
 type Exemption struct {
 	g     *Graph
+	skip  *parse.Globs
 	roots []string
 	texts map[string][]byte // path -> contents, loaded on first use
 }
 
 // NewExemption checks deletions against g and the files under roots (the
-// base and head trees).
-func NewExemption(g *Graph, roots ...string) *Exemption {
-	return &Exemption{g: g, roots: roots}
+// base and head trees), leaving out paths skip matches.
+func NewExemption(g *Graph, skip *parse.Globs, roots ...string) *Exemption {
+	return &Exemption{g: g, skip: skip, roots: roots}
 }
 
 // MaxFileSize bounds the files searched for mentions.
@@ -78,10 +79,13 @@ func (e *Exemption) load() {
 			if err != nil {
 				return nil
 			}
-			if d.IsDir() {
-				if path != root && parse.SkipDir(path) {
+			if rel, err := filepath.Rel(root, path); err == nil && rel != "." && e.skip.Match(filepath.ToSlash(rel)) {
+				if d.IsDir() {
 					return filepath.SkipDir
 				}
+				return nil
+			}
+			if d.IsDir() {
 				return nil
 			}
 			info, err := d.Info()
