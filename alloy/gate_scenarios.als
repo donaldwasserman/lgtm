@@ -20,7 +20,7 @@ pred defaults[g: Gate] {
   no g.theta_depth
   int[g.theta_breadth] = 25
   int[g.theta_modules] = 4
-  int[g.theta_lines] = 10
+  int[g.theta_lines] = 70
   int[g.theta_uncovered] = 1
   int[g.theta_cog] = 5
   int[g.theta_new_function] = 25
@@ -228,7 +228,7 @@ run scenario_allOffDeepAndWide {
 
 run scenario_depthSwitchedOn {
   all s: Scores, g: Gate | int[g.theta_depth] = 7 and
-    int[g.theta_breadth] = 25 and int[g.theta_modules] = 4 and int[g.theta_lines] = 10 and
+    int[g.theta_breadth] = 25 and int[g.theta_modules] = 4 and int[g.theta_lines] = 70 and
     int[g.theta_uncovered] = 1 and int[g.theta_cog] = 5 and int[g.theta_new_function] = 25 and
     int[g.theta_significance] = 4 and int[g.theta_blast] = 30 and
     plain[s] and newScores[s, 1, 0, 0, 1, 0, 0] and
@@ -237,7 +237,7 @@ run scenario_depthSwitchedOn {
 
 run scenario_uncoveredSwitchedOff {
   all s: Scores, g: Gate | no g.theta_depth and no g.theta_uncovered and
-    int[g.theta_breadth] = 25 and int[g.theta_modules] = 4 and int[g.theta_lines] = 10 and
+    int[g.theta_breadth] = 25 and int[g.theta_modules] = 4 and int[g.theta_lines] = 70 and
     int[g.theta_cog] = 5 and int[g.theta_new_function] = 25 and
     int[g.theta_significance] = 4 and int[g.theta_blast] = 30 and
     plain[s] and newScores[s, 0, 0, 0, 0, 0, 0] and
