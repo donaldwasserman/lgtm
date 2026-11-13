@@ -15,7 +15,7 @@ func TestRunExitCodes(t *testing.T) {
 	trivialBase := writeTree(t, "tb", map[string]string{"a.go": "package p\nfunc f(){}\n"})
 	trivialHead := writeTree(t, "th", map[string]string{"a.go": "package p\nfunc f(){}\n"})
 	broadHead := map[string]string{}
-	for i := 0; i < 16; i++ {
+	for i := 0; i < 26; i++ {
 		broadHead[filepath.Join("pkg", "f"+string(rune('a'+i))+".go")] = "package p\nfunc X(){}\n"
 	}
 	broadBase := writeTree(t, "bb", nil)
@@ -67,7 +67,7 @@ func TestRunExitCodes(t *testing.T) {
 func TestReportContract(t *testing.T) {
 	base := writeTree(t, "base", nil)
 	headFiles := map[string]string{}
-	for i := 0; i < 16; i++ {
+	for i := 0; i < 26; i++ {
 		headFiles[filepath.Join("pkg", "f"+string(rune('a'+i))+".go")] = "package p\nfunc X(){}\n"
 	}
 	head := writeTree(t, "head", headFiles)
